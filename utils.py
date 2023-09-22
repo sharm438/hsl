@@ -16,27 +16,27 @@ import random
  
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--nspokes", help="# clients", default=10, type=int)
-    parser.add_argument("--nhubs", help="# servers", default=1, type=int)
-    parser.add_argument("--nrounds", help="# training rounds", default=20, type=int)
-    parser.add_argument("--niters", help="# local iterations", default=1, type=int)
+    parser.add_argument("--num_spokes", help="# clients", default=10, type=int)
+    parser.add_argument("--num_hubs", help="# servers", default=1, type=int)
+    parser.add_argument("--num_rounds", help="# training rounds", default=20, type=int)
+    parser.add_argument("--num_local_iters", help="# local iterations", default=1, type=int)
 
     parser.add_argument("--gpu", help="index of gpu", default=0, type=int)
     parser.add_argument("--exp", help="Experiment name", default='', type=str)
+
     parser.add_argument("--dataset", help="dataset", default='cifar10', type=str)
     parser.add_argument("--bias", help="degree of non-IID to assign data to workers", type=float, default=0.5)
 
-    parser.add_argument("--attack", help="type of attack", default='benign', type=str,
+    parser.add_argument("--attack", help="type of attack", default='benign', type=str, choices=['benign', 'full_trim', 'full_krum', 'adaptive_trim', 'adaptive_krum', 'shejwalkar', 'shej_agnostic'])
     parser.add_argument("--nbyz", help="# byzantines", default=0, type=int)
-                        choices=['benign', 'full_trim', 'full_krum', 'adaptive_trim', 'adaptive_krum', 'shejwalkar', 'shej_agnostic'])
     parser.add_argument("--aggregation", help="aggregation rule", default='p2p', type=str)
     parser.add_argument("--cmax", help="PRISM's notion of c_max", default=0, type=int)
-    parser.add_argument("--nedges", help="Out of the lower triangle", default=1, type=float)
+    parser.add_argument("--num_edges", help="Out of the lower triangle", default=1, type=float)
     parser.add_argument("--W", help="Whether to load a saved W", default=None, type=str)
     parser.add_argument("--save_time", help="array saving frequency", default=100, type=int)
-    parser.add_argument("--eval_time", help="evaluation frequency", default=10, type=int)
+    parser.add_argument("--eval_time", help="evaluation frequency", default=1, type=int)
     parser.add_argument("--self_wt", help="Weight assigned to self in gossip averaging", default=None, type=float)
-    parser.add_argument("--mal", help="malicious client indices", default=None, type=str) 
+    parser.add_argument("--mal_idx", help="malicious client indices", default=None, type=str) 
     parser.add_argument("--graph_type", help="k-regular or power-law", default='k-regular', type=str)
     parser.add_argument("--min_degree", help="min in-degree for power law", default=None, type=int)
     parser.add_argument("--max_degree", help="max in-degree for power law", default=None, type=int)
@@ -102,8 +102,7 @@ def random_graph(nrows, ncols, nedges, agr="mean"):
             nedges_rem -= 1
 
         if (W.sum(axis=0).min().item() < 2):
-            print("Some nodes remained isolated, enter a larger value of nedges to promote collabortion among nodes")
-            pdb.set_trace()
+            raise ValueError("Some nodes remained isolated, enter a larger value of nedges to promote collabortion among nodes")
             
         if (agr == 'mean'):
             for i in range(nrows): W[i] = W[i]/W[i].sum()
@@ -378,17 +377,15 @@ def load_attack(attack_name):
 
     return byz
 
-def load_net(net_name, num_inputs, num_outputs, device):
+def load_net(net_name, num_inputs, num_outputs, device, seed=None):
 
+    if (seed): toech.manual_seed(seed)
     if (net_name == 'resnet18'):
-        torch.manual_seed(11)
         net = nets.ResNet18()
     elif(net_name == 'dnn'):
-        torch.manual_seed(11)
         net = nets.DNN()
     elif(net_name == 'lstm'):
         n_characters = len(string.printable)
-        torch.manual_seed(11)
         net = nets.CharRNN(n_characters, 128, n_characters, 'lstm', 2)
     net.to(device) 
     return net
@@ -416,63 +413,116 @@ def load_data(dataset_name):
 
     if (dataset_name == 'mnist'):
         print("Loading MNIST")
-        batch_size = 32
-        transform=transforms.Compose([
-                       transforms.ToTensor(),
-                       transforms.Normalize((0.1307,), (0.3081,))
-                   ]) 
-        trainset = torchvision.datasets.MNIST(root='./data', train=True, download='True', transform=transform)
-        train_data = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=False)
-        testset = torchvision.datasets.MNIST(root='./data', train=False, download='True', transform=transform)
-        test_data = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False)
-        del trainset, testset        
-        num_inputs = 28 * 28
-        num_outputs = 10
+        num_inputs, num_outputs= 28 * 28, 10
         net_name = 'dnn'
-        lr = 0.01
+        batch_size, lr = 32, 0.01
 
+        transform = transforms.Compose([
+                        transforms.ToTensor(),
+                        transforms.Normalize((0.1307,), (0.3081,))
+                    ]) 
+        trainset = torchvision.datasets.MNIST(
+                       root='./data',
+                       train=True,
+                       download='True', 
+                       transform=transform
+                    )
+        train_data = torch.utils.data.DataLoader(
+                         trainset,
+                         batch_size=batch_size,
+                         shuffle=False
+                     )
+        testset = torchvision.datasets.MNIST(
+                      root='./data',
+                      train=False,
+                      download='True',
+                      transform=transform
+                  )
+        test_data = torch.utils.data.DataLoader(
+                        testset,
+                        batch_size=batch_size,
+                        shuffle=False
+                    )
+
+        del trainset, testset        
          
     elif (dataset_name == 'fmnist'):
         print("Loading FMNIST")
-        batch_size = 32
-        transform=transforms.Compose([
-                       transforms.ToTensor(),
-                       transforms.Normalize((0.1307,), (0.3081,))
-                   ]) 
-        trainset = torchvision.datasets.FashionMNIST(root='./data', train=True, download='True', transform=transform)
-        train_data = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=False)
-        testset = torchvision.datasets.FashionMNIST(root='./data', train=False, download='True', transform=transform)
-        test_data = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False)
-        del trainset, testset        
         num_inputs = 28 * 28
         num_outputs = 10
         net_name = 'dnn'
-        lr = 0.01
+        batch_size, lr = 32, 0.01
 
+        transform = transforms.Compose([
+                       transforms.ToTensor(),
+                       transforms.Normalize((0.1307,), (0.3081,))
+                    ]) 
+        trainset = torchvision.datasets.FashionMNIST(
+                       root='./data',
+                       train=True,
+                       download='True',
+                       transform=transform
+                   )
+        train_data = torch.utils.data.DataLoader(
+                        trainset,
+                        batch_size=batch_size,
+                        shuffle=False
+                     )
+        testset = torchvision.datasets.FashionMNIST(
+                      root='./data',
+                      train=False,
+                      download='True',
+                      transform=transform
+                  )
+        test_data = torch.utils.data.DataLoader(
+                        testset,
+                        batch_size=batch_size,
+                        shuffle=False
+                    )
+
+        del trainset, testset        
 
     elif dataset_name == 'cifar10':
         print("Loading CIFAR-10")
-        batch_size = 128
-        transform_train = transforms.Compose([
-            transforms.RandomCrop(32, padding=4),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-        ])
-        transform_test = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-        ])        
-        trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download='True', transform=transform_train)
-        train_data = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=False)
-        testset = torchvision.datasets.CIFAR10(root='./data', train=False, download='True', transform=transform_test)
-        test_data = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False)
-        del trainset, testset
         num_inputs = 32*32*3
         num_outputs = 10
         net_name = 'resnet18'
-        lr = 0.1
+        batch_size, lr = 128, 0.1
 
+        transform_train = transforms.Compose([
+                              transforms.RandomCrop(32, padding=4),
+                              transforms.RandomHorizontalFlip(),
+                              transforms.ToTensor(),
+                              transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+                          ])
+        transform_test = transforms.Compose([
+                             transforms.ToTensor(),
+                             transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+                         ])        
+        trainset = torchvision.datasets.CIFAR10(
+                       root='./data',
+                       train=True,
+                       download='True',
+                       transform=transform_train
+                   )
+        train_data = torch.utils.data.DataLoader(
+                         trainset,
+                         batch_size=batch_size,
+                         shuffle=False
+                     )
+        testset = torchvision.datasets.CIFAR10(
+                      root='./data',
+                      train=False,
+                      download='True',
+                      transform=transform_test
+                  )
+        test_data = torch.utils.data.DataLoader(
+                        testset,
+                        batch_size=batch_size,
+                        shuffle=False
+                    )
+
+        del trainset, testset
        
     elif dataset_name == 'shakespeare':
         print("Loading Shakespeare dataset")
@@ -481,28 +531,37 @@ def load_data(dataset_name):
 
     else:
         sys.exit('Not Implemented Dataset!')
+    
     return train_data, test_data, num_inputs, num_outputs, net_name, lr, batch_size
 
 
-def distribute_data_fang(device, batch_size, bias_weight, train_data, num_workers, num_inputs, num_outputs, net_name):
+def distribute_data_by_label(device,
+                             batch_size,
+                             bias_weight,
+                             train_data,
+                             num_workers,
+                             num_inputs,
+                             num_outputs,
+                             net_name
+                             ):
 
     if net_name == 'lstm':
-        each_worker_data = []
-        each_worker_label = []
+        distributed_data = []
+        distributed_label = []
         wts = torch.ones(num_workers).to(device) / num_workers
         for i in range(num_workers+1):
             if (i<num_workers):
                 chunk = train_data[i*200*32: (i+1)*200*32+1]
             else: 
                 chunk = train_data[i*200*32+1:]
-            each_worker_data.append(char_tensor(chunk[:-1]).to(device))
-            each_worker_label.append(char_tensor(chunk[1:]).to(device))
-        return each_worker_data, each_worker_label, None
+            distributed_data.append(char_tensor(chunk[:-1]).to(device))
+            distributed_label.append(char_tensor(chunk[1:]).to(device))
+        return distributed_data, distributed_label, None
 
     other_group_size = (1-bias_weight) / (num_outputs-1)
     worker_per_group = num_workers / (num_outputs)
-    each_worker_data = [[] for _ in range(num_workers)]
-    each_worker_label = [[] for _ in range(num_workers)] 
+    distributed_data = [[] for _ in range(num_workers)]
+    distributed_label = [[] for _ in range(num_workers)] 
     batch_ctr = 0
     for _, (data, label) in enumerate(train_data):
         sample_ctr = 0
@@ -524,19 +583,19 @@ def distribute_data_fang(device, batch_size, bias_weight, train_data, num_worker
             rd = np.random.random_sample()
             selected_worker = int(worker_group*worker_per_group + int(np.floor(rd*worker_per_group)))
             if (bias_weight == 0): selected_worker = np.random.randint(num_workers)
-            each_worker_data[selected_worker].append(x.to(device))
-            each_worker_label[selected_worker].append(y.to(device))
+            distributed_data[selected_worker].append(x.to(device))
+            distributed_label[selected_worker].append(y.to(device))
         batch_ctr += 1
     # concatenate the data for each worker
-    each_worker_data = [(torch.stack(each_worker, dim=0)).squeeze(0) for each_worker in each_worker_data] 
-    each_worker_label = [(torch.stack(each_worker, dim=0)).squeeze(0) for each_worker in each_worker_label]
+    distributed_data = [(torch.stack(data, dim=0)).squeeze(0) for data in distributed_data] 
+    distributed_label = [(torch.stack(labels, dim=0)).squeeze(0) for labels in distributed_label]
     
     # random shuffle the workers
     random_order = np.random.RandomState(seed=42).permutation(num_workers)
-    each_worker_data = [each_worker_data[i] for i in random_order]
-    each_worker_label = [each_worker_label[i] for i in random_order]
-    wts = torch.zeros(len(each_worker_data)).to(device)
-    for i in range(len(each_worker_data)):
-        wts[i] = len(each_worker_data[i])
+    distributed_data = [distributed_data[i] for i in random_order]
+    distributed_label = [distributed_label[i] for i in random_order]
+    wts = torch.zeros(len(distributed_data)).to(device)
+    for i in range(len(distributed_data)):
+        wts[i] = len(distributed_data[i])
     wts = wts/torch.sum(wts)
-    return each_worker_data, each_worker_label, wts
+    return distributed_data, distributed_label, wts
