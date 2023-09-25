@@ -204,17 +204,20 @@ def main(args):
         ###Do the aggregation
 
         spoke_wts = torch.stack([(torch.cat([xx.reshape((-1)) for xx in x], dim=0)).squeeze(0) for x in spoke_wts])
-
+        if (rnd % args.eval_time == args.eval_time - 1) and (rnd > 0):
+            save_cdist = args.save_cdist
+        else:
+            save_cdist = 0
         if (args.aggregation == 'p2p'):
             #W = wts.repeat((len(W), 1))
-            past_avg_wts, spoke_wts, predist[rnd], postdist[rnd] = aggregation.p2p(device, rnd, args.dataset, args.g, W, past_avg_wts, spoke_wts, byz, args.attack_prob, lamda, mal_flag, args.save_cdist) 
+            past_avg_wts, spoke_wts, predist[rnd], postdist[rnd] = aggregation.p2p(device, rnd, args.dataset, args.g, W, past_avg_wts, spoke_wts, byz, args.attack_prob, lamda, mal_flag, save_cdist) 
             #for i in range(num_spokes):
             #    nets[i] = utils.vec_to_model(global_wts[i], args.net, inp_dim, out_dim, torch.device('cuda'))
             #grad_list = torch.stack([(torch.cat([xx.reshape((-1)) for xx in x], dim=0)).squeeze(0) for x in grad_list])
             #net_fed = utils.vec_to_model(torch.matmul(wts, grad_list), args.net, inp_dim, num_outputs, torch.device('cuda'))
 
         elif (args.aggregation == 'hsl'):
-            spoke_wts, predist[rnd], postdist[rnd] = aggregation.hsl(device, rnd, args.dataset, args.g, W_hs, W_h, W_sh, past_avg_wts, spoke_wts, byz, args.attack_prob, lamda, mal_flag, args.save_cdist, args.threat_model)
+            spoke_wts, predist[rnd], postdist[rnd] = aggregation.hsl(device, rnd, args.dataset, args.g, W_hs, W_h, W_sh, past_avg_wts, spoke_wts, byz, args.attack_prob, lamda, mal_flag, save_cdist, args.threat_model)
 
         elif (args.aggregation == 'secure_p2p'):
             fmax = args.nbyz / args.num_spokes
