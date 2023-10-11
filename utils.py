@@ -13,13 +13,32 @@ import string
 import torch.nn as nn
 
 import random
- 
+
+import attrs
+
+@attrs.define(frozen=False)
+class TrainObject:
+    dataset_name: str
+    net_name: str
+    train_data: torch.utils.data.dataloader.DataLoader
+    test_data: torch.utils.data.dataloader.DataLoader
+    num_inputs: int
+    num_outputs: int
+    lr: float
+    batch_size: int
+
+@attrs.define(frozen=False)
+class DistributedData:
+    distributed_input: list[torch.Tensor]
+    distributed_output: list[torch.Tensor]
+    wts: torch.Tensor
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--num_spokes", help="# clients", default=10, type=int)
     parser.add_argument("--num_hubs", help="# servers", default=1, type=int)
-    parser.add_argument("--num_rounds", help="# training rounds", default=20, type=int)
-    parser.add_argument("--num_local_iters", help="# local iterations", default=1, type=int)
+    parser.add_argument("--num_rounds", help="# training rounds", default=500, type=int)
+    parser.add_argument("--num_local_iters", help="# local iterations", default=5, type=int)
 
     parser.add_argument("--gpu", help="index of gpu", default=0, type=int)
     parser.add_argument("--exp", help="Experiment name", default='', type=str)
@@ -33,8 +52,10 @@ def parse_args():
     parser.add_argument("--cmax", help="PRISM's notion of c_max", default=0, type=int)
     parser.add_argument("--num_edges", help="Out of the lower triangle", default=1, type=float)
     parser.add_argument("--W", help="Whether to load a saved W", default=None, type=str)
+    parser.add_argument("--W_type", help="how to generate W", default='random_graph', type=str)
+
     parser.add_argument("--save_time", help="array saving frequency", default=100, type=int)
-    parser.add_argument("--eval_time", help="evaluation frequency", default=1, type=int)
+    parser.add_argument("--eval_time", help="evaluation frequency", default=10, type=int)
     parser.add_argument("--self_wt", help="Weight assigned to self in gossip averaging", default=None, type=float)
     parser.add_argument("--mal_idx", help="malicious client indices", default=None, type=str) 
     parser.add_argument("--graph_type", help="k-regular or power-law", default='k-regular', type=str)
@@ -48,7 +69,7 @@ def parse_args():
     parser.add_argument("--W_h", help="Whether to load a saved W_h", default=None, type=str)
     parser.add_argument("--nedges_hs", help="Out of nhubs*nspokes", default=1, type=float)
     parser.add_argument("--nedges_h", help="Out of the lower triangle nhubs*(nhubs-1)/2", default=1, type=float)
-    parser.add_argument("--save_cdist", help="whether to save predist and postdist", default=0, type=int)
+    parser.add_argument("--save_cdist", help="whether to save predist and postdist", default=1, type=int)
     parser.add_argument("--g", help="number of gossip steps", default=1, type=int)
     parser.add_argument("--th_lo", help="downvote threshold", default=0, type=int)
     parser.add_argument("--th_hi", help="upvote threshold", default=0, type=int)
@@ -531,9 +552,10 @@ def load_data(dataset_name):
 
     else:
         sys.exit('Not Implemented Dataset!')
-    
-    return train_data, test_data, num_inputs, num_outputs, net_name, lr, batch_size
 
+    trainObject = TrainObject(dataset_name, net_name, train_data, test_data, num_inputs, num_outputs, lr, batch_size)
+
+    return trainObject
 
 def distribute_data_by_label(device,
                              batch_size,
@@ -544,6 +566,8 @@ def distribute_data_by_label(device,
                              num_outputs,
                              net_name
                              ):
+
+    #if bias_weight == 1:
 
     if net_name == 'lstm':
         distributed_data = []
@@ -598,4 +622,5 @@ def distribute_data_by_label(device,
     for i in range(len(distributed_data)):
         wts[i] = len(distributed_data[i])
     wts = wts/torch.sum(wts)
-    return distributed_data, distributed_label, wts
+    distributedData = DistributedData(distributed_data, distributed_label, wts)
+    return distributedData

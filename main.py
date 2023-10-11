@@ -29,13 +29,24 @@ def main(args):
     if not os.path.isdir(outputs_path):
         os.makedirs(outputs_path)
 
-    ###Load dataset
-    train_data, test_data, inp_dim, out_dim, net_name, lr_init, batch_size = utils.load_data(args.dataset)
-    distributed_data, distributed_label, wts = utils.distribute_data_by_label(device, batch_size, args.bias, train_data, num_spokes, inp_dim, out_dim, net_name)
-    # numpy array of dimension num_spokes * out_dim
+    # Load data.
+    trainObject = utils.load_data(args.dataset)
+    train_data = trainObject.train_data 
+    test_data = trainObject.test_data
+    inp_dim = trainObject.num_inputs
+    out_dim = trainObject.num_outputs 
+    net_name = trainObject.net_name
+    lr_init = trainObject.lr
+    batch_size = trainObject.batch_size 
+
+    # Distribute data.
+    distributedData = utils.distribute_data_by_label(device, batch_size, args.bias, train_data, num_spokes, inp_dim, out_dim, net_name)
+    distributed_data = distributedData.distributed_input
+    distributed_label = distributedData.distributed_output
+    wts = distributedData.wts
     label_distr = utils.label_distr(distributed_label, out_dim)
 
-    ####Load models
+    # Load models.
     net = utils.load_net(net_name, inp_dim, out_dim, device) # Can pass seed here if desired.
     # TODO : spokes should use differential privacy in the first round
     nets = {}
@@ -78,7 +89,10 @@ def main(args):
     #W = utils.k_regular_W(num_spokes, args.k, device)
     if (args.aggregation.find('p2p') != -1):
       if (args.W == None):
-          W = utils.random_graph(num_spokes, num_spokes, args.num_edges, args.agr) #choices: mean, random_static, adjacency_static
+          if (args.W_type == 'random_graph'):
+            W = utils.random_graph(num_spokes, num_spokes, args.num_edges, args.agr) #choices: mean, random_static, adjacency_static
+          elif (args.W_type == 'self_wt'):
+            W = utils.self_wt(num_spokes, num_spokes, args.self_wt, device)
           W = W.to(device)
           torch.save(W, filename+'_W.pt')
       else: 
@@ -173,6 +187,7 @@ def main(args):
         spoke_wts = []
         if (args.dataset == 'cifar10'):
             lr = utils.get_lr(rnd, num_rounds, lr_init)
+        else: lr = lr_init
         for worker in range(num_spokes):
             if (args.aggregation == 'fedsgd'):
                 net_local = deepcopy(net_fed)
@@ -204,6 +219,8 @@ def main(args):
         ###Do the aggregation
 
         spoke_wts = torch.stack([(torch.cat([xx.reshape((-1)) for xx in x], dim=0)).squeeze(0) for x in spoke_wts])
+        avg_wts = torch.mean(spoke_wts, 0)
+        avg_model = utils.vec_to_model(avg_wts, net_name, inp_dim, out_dim, device)
         if (rnd % args.eval_time == args.eval_time - 1) and (rnd > 0):
             save_cdist = args.save_cdist
         else:
@@ -271,6 +288,7 @@ def main(args):
 
         ##Evaluate the learned model on test dataset
         if(args.dataset == 'cifar10'): dummy_data_shape = [128,3,32,32]
+        elif(args.dataset == 'mnist'): dummy_data_shape = [32,1,28,28]
         else: pdb.set_trace()
         if (rnd%args.eval_time == args.eval_time-1 and rnd>0):
             if (args.aggregation == 'fedsgd'):
@@ -287,8 +305,12 @@ def main(args):
                 print('Round: %d, test_acc: %.3f' %(rnd, fed_test_acc[int(rnd/args.eval_time)]))
             else:
                 traced_models = []
-                for i in range(num_spokes):
-                    traced_models.append(torch.jit.trace(nets[i], torch.randn(dummy_data_shape).to(device))) 
+                for i in range(num_spokes + 1):
+                    if i < num_spokes:
+                      traced_models.append(torch.jit.trace(nets[i], torch.randn(dummy_data_shape).to(device))) 
+                    else:
+                      traced_models.append(torch.jit.trace(avg_model, torch.randn(dummy_data_shape).to(device)))
+
                     correct = 0
                     total = 0
                     
@@ -300,7 +322,10 @@ def main(args):
                             total += labels.size(0)
                             correct += (predicted == labels.to(device)).sum().item()
 
-                    local_test_acc[int(rnd/args.eval_time)][i] = correct/total                
+                    if (i < num_spokes):
+                      local_test_acc[int(rnd/args.eval_time)][i] = correct/total                
+                    else:
+                      test_acc[int(rnd/args.eval_time)] = correct/total
                 print ('Round: %d, predist: %.3f, postdist: %.3f, test_acc:[%.3f, %.3f]' %(rnd, predist[rnd], postdist[rnd], min(local_test_acc[int(rnd/args.eval_time)]), max(local_test_acc[int(rnd/args.eval_time)])))      
             if (args.attack != 'benign'): print("Avg ben acc: %.3f, avg mal acc: %.3f" %(local_test_acc[int(rnd/args.eval_time)][mal_flag==0].mean(), local_test_acc[int(rnd/args.eval_time)][mal_flag==1].mean()))
             time_taken = time.time() - start_time
@@ -312,6 +337,7 @@ def main(args):
             if (args.aggregation == 'fedsgd'): np.save(filename+'_test_acc.npy', fed_test_acc)
             else:
                 np.save(filename+'_local_test_acc.npy', local_test_acc)
+                np.save(filename+'_consensus_test_acc.npy', test_acc)
                 if (args.save_cdist):
                     np.save(filename+'_postdist.npy', postdist)
                     np.save(filename+'_predist.npy', predist)
