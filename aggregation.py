@@ -228,7 +228,8 @@ def hsl(device, rnd, dataset, g, W_hs, W_h, W_sh, past_avg_wts, spoke_wts, byz, 
     if (save_cdist): pre_cdist = torch.sum((spoke_wts-torch.mean(spoke_wts, dim=0))**2)/len(spoke_wts)
 
     if (threat_model == 'benign'):
-        if (g == 1): spoke_wts = torch.mm(torch.mm(W_sh, torch.mm(W_h, W_hs)), spoke_wts)
+        if (g == 1):
+            spoke_wts = torch.mm(torch.mm(W_sh, torch.mm(W_h, W_hs)), spoke_wts)
         else:
             spoke_wts = torch.mm(torch.mm(W_sh, torch.mm(torch.matrix_power(W_h, g), W_hs)), spoke_wts)   
     else:

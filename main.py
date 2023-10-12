@@ -44,13 +44,14 @@ def main(args):
     distributed_data = distributedData.distributed_input
     distributed_label = distributedData.distributed_output
     wts = distributedData.wts
+    #wts = torch.ones(num_spokes).to(device) / num_spokes
     label_distr = utils.label_distr(distributed_label, out_dim)
 
     # Load models.
-    net = utils.load_net(net_name, inp_dim, out_dim, device) # Can pass seed here if desired.
+    net = utils.load_net(net_name, inp_dim, out_dim, device, seed=108) # Can pass seed here if desired.
     # TODO : spokes should use differential privacy in the first round
     nets = {}
-    for i in range(num_spokes): nets[i] = utils.create_model(net, net_name, inp_dim, out_dim)
+    for i in range(num_spokes): nets[i] = utils.create_model(net, net_name, inp_dim, out_dim, seed=108)
 
     # TODO - compute avg weights if all models are different, else return net as the avg model
     past_avg_wts = utils.model_to_vec(net)
@@ -91,6 +92,7 @@ def main(args):
       if (args.W == None):
           if (args.W_type == 'random_graph'):
             W = utils.random_graph(num_spokes, num_spokes, args.num_edges, args.agr) #choices: mean, random_static, adjacency_static
+            #W = utils.fully_connect(num_spokes)
           elif (args.W_type == 'self_wt'):
             W = utils.self_wt(num_spokes, num_spokes, args.self_wt, device)
           W = W.to(device)

@@ -67,8 +67,8 @@ def parse_args():
     parser.add_argument("--W_hs", help="Whether to load a saved W_hs", default=None, type=str)
     parser.add_argument("--W_sh", help="Whether to load a saved W_sh", default=None, type=str)
     parser.add_argument("--W_h", help="Whether to load a saved W_h", default=None, type=str)
-    parser.add_argument("--nedges_hs", help="Out of nhubs*nspokes", default=1, type=float)
-    parser.add_argument("--nedges_h", help="Out of the lower triangle nhubs*(nhubs-1)/2", default=1, type=float)
+    parser.add_argument("--num_edges_hs", help="Out of nhubs*nspokes", default=1, type=float)
+    parser.add_argument("--num_edges_h", help="Out of the lower triangle nhubs*(nhubs-1)/2", default=1, type=float)
     parser.add_argument("--save_cdist", help="whether to save predist and postdist", default=1, type=int)
     parser.add_argument("--g", help="number of gossip steps", default=1, type=int)
     parser.add_argument("--th_lo", help="downvote threshold", default=0, type=int)
@@ -102,6 +102,36 @@ def label_distr(labels, nlabels):
 
 def plaw_graph(nnodes, exp):
 
+    return W
+
+def assign_hubs(num_hubs, num_spokes, label_distr):
+    ## toy setup
+    ## works when num_spokes is a multiple of num_labels and also num_hubs
+    ## harcoded
+    majority_label = np.argmax(label_distr, axis=1)
+    W_hs = torch.zeros((num_hubs, num_spokes))
+    W_sh = torch.zeros((num_spokes, num_hubs))
+    for i in range(num_spokes):
+         first_hub = majority_label[i]//2
+         second_hub = (first_hub + 1) % num_hubs
+         W_sh[i][first_hub] = W_sh[i][second_hub] = 0.5
+         W_hs[first_hub][i] = W_hs[second_hub][i] = 1
+         for i in range(num_hubs):
+             W_hs[i] = W_hs[i] / W_hs[i].sum()
+    return W_hs, W_sh
+
+def connect_hubs(num_hubs):
+    ## hardcoded to connect in a ring
+    W = torch.zeros((num_hubs, num_hubs))
+    for i in range(num_hubs):
+        first_hub = (i+1) % num_hubs
+        second_hub = (i-1) % num_hubs
+        W[i][i] = W[i][first_hub] = W[i][second_hub] = 1/3
+    return W
+
+def fully_connect(num_spokes):
+    ## harcoded
+    W = torch.ones((num_spokes, num_spokes)) / num_spokes
     return W
 
 def random_graph(nrows, ncols, nedges, agr="mean"):
@@ -304,8 +334,8 @@ def vec_to_model(vec, net_name, num_inp, num_out, device):
                 idx += param[1].nelement()
     return net
 
-def create_model(net, net_name, num_inp, num_outp):
-    created_net = load_net(net_name, num_inp, num_outp, torch.device('cuda'))
+def create_model(net, net_name, num_inp, num_outp, seed):
+    created_net = load_net(net_name, num_inp, num_outp, torch.device('cuda'), seed)
     with torch.no_grad():
         idx = 0
         for param1, param2 in zip(created_net.parameters(), net.parameters()):
@@ -400,7 +430,7 @@ def load_attack(attack_name):
 
 def load_net(net_name, num_inputs, num_outputs, device, seed=None):
 
-    if (seed): toech.manual_seed(seed)
+    if (seed): torch.manual_seed(seed)
     if (net_name == 'resnet18'):
         net = nets.ResNet18()
     elif(net_name == 'dnn'):
