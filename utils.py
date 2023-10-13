@@ -53,6 +53,7 @@ def parse_args():
     parser.add_argument("--num_edges", help="Out of the lower triangle", default=1, type=float)
     parser.add_argument("--W", help="Whether to load a saved W", default=None, type=str)
     parser.add_argument("--W_type", help="how to generate W", default='random_graph', type=str)
+    parser.add_argument("--map_type", help="greedy or foolish", default='greedy', type=str)
 
     parser.add_argument("--save_time", help="array saving frequency", default=100, type=int)
     parser.add_argument("--eval_time", help="evaluation frequency", default=10, type=int)
@@ -104,6 +105,63 @@ def plaw_graph(nnodes, exp):
 
     return W
 
+def greedy_hubs(num_hubs, num_spokes, num_spoke_connections, label_distr, map_type):
+    ## proposed algorithm to mimic global distribution locally
+    W_hs = torch.zeros((num_hubs, num_spokes))
+    W_sh = torch.zeros((num_spokes, num_hubs))
+    num_hub_connections = int(num_spokes * 2 / num_hubs)
+    global_label_distr_norm = label_distr.sum(0) / label_distr.sum()
+    for i in range(num_hub_connections):
+        random_hub_sequence = random.sample(range(num_hubs), num_hubs)
+        for hub in random_hub_sequence:
+            available_spokes = np.where(W_hs.sum(0) < num_spoke_connections)[0]
+            my_spokes = np.where(W_hs[hub])[0]
+            duplicate_spokes = np.isin(available_spokes, my_spokes)
+            available_spokes = available_spokes[~duplicate_spokes]
+            hub_label_distr = label_distr[np.where(W_hs[hub])[0]].sum(0)
+            ## TODO - undo changes
+            if map_type == 'greedy': min_kl_div = np.inf
+            elif map_type == 'foolish': min_kl_div = -np.inf
+            closest_spoke = -1
+            for spoke in available_spokes:
+                updated_hub_label_distr = hub_label_distr + label_distr[spoke]
+                updated_hub_label_distr_norm = updated_hub_label_distr / updated_hub_label_distr.sum()
+                kl_div = compute_kl_div(global_label_distr_norm, updated_hub_label_distr_norm) 
+                ## Undo changes
+                if map_type == 'greedy': 
+                    if kl_div < min_kl_div:
+                        min_kl_div = kl_div
+                        closest_spoke = spoke
+                elif map_type == 'foolish': 
+                    if kl_div > min_kl_div:
+                        min_kl_div = kl_div
+                        closest_spoke = spoke
+            if closest_spoke != -1:
+                print("Hub %d chose spoke %d" %(hub, closest_spoke))
+                W_hs[hub][closest_spoke] = 1
+                W_sh[closest_spoke][hub] = 1
+                hub_label_distr += label_distr[closest_spoke]
+
+    kl_divs = []
+    for hub in range(num_hubs): 
+        hub_label_distr = label_distr[np.where(W_hs[hub])[0]].sum(0)
+        hub_label_distr_norm = hub_label_distr / hub_label_distr.sum()
+        kl_divs.append(compute_kl_div(global_label_distr_norm, hub_label_distr_norm))
+        W_hs[hub] /= W_hs[hub].sum()
+    print(kl_divs, np.mean(kl_divs))
+    for spoke in range(num_spokes): 
+        num_connections = len(np.where(W_sh[spoke])[0])
+        if (num_connections != num_spoke_connections):
+            print("Spoke %d has %d connections but needed %d connections" %(spoke, num_connections, num_spoke_connections))
+        W_sh[spoke] /= W_sh[spoke].sum()
+    return W_hs, W_sh
+
+def compute_kl_div(p, q):
+    p = np.where(p==0, 1e-10, p)
+    q = np.where(q==0, 1e-10, q)
+    kl_div = np.sum(p * np.log(p/q))
+    return kl_div
+
 def assign_hubs(num_hubs, num_spokes, label_distr):
     ## toy setup
     ## works when num_spokes is a multiple of num_labels and also num_hubs
@@ -112,12 +170,12 @@ def assign_hubs(num_hubs, num_spokes, label_distr):
     W_hs = torch.zeros((num_hubs, num_spokes))
     W_sh = torch.zeros((num_spokes, num_hubs))
     for i in range(num_spokes):
-         first_hub = majority_label[i]//2
-         second_hub = (first_hub + 1) % num_hubs
-         W_sh[i][first_hub] = W_sh[i][second_hub] = 0.5
-         W_hs[first_hub][i] = W_hs[second_hub][i] = 1
-         for i in range(num_hubs):
-             W_hs[i] = W_hs[i] / W_hs[i].sum()
+        first_hub = majority_label[i]//2
+        second_hub = (first_hub + 1) % num_hubs
+        W_sh[i][first_hub] = W_sh[i][second_hub] = 0.5
+        W_hs[first_hub][i] = W_hs[second_hub][i] = 1
+    for i in range(num_hubs):
+        W_hs[i] = W_hs[i] / W_hs[i].sum()
     return W_hs, W_sh
 
 def connect_hubs(num_hubs):

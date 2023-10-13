@@ -83,7 +83,7 @@ def main(args):
             P = P + param.nelement()
     if (args.aggregation == 'fedsgd'): 
         fed_test_acc = np.zeros(int(num_rounds/args.eval_time))
-        net_fed = utils.create_model(net, net_name, inp_dim, out_dim)
+        net_fed = utils.create_model(net, net_name, inp_dim, out_dim, seed=108)
     batch_idx = np.zeros(num_spokes)
    
     #if (args.self_wt != None): W = utils.self_wt(num_spokes, args.k, args.self_wt, device)
@@ -95,6 +95,8 @@ def main(args):
             #W = utils.fully_connect(num_spokes)
           elif (args.W_type == 'self_wt'):
             W = utils.self_wt(num_spokes, num_spokes, args.self_wt, device)
+          elif (args.W_type == 'ring'):
+            W = utils.connect_hubs(num_spokes)
           W = W.to(device)
           torch.save(W, filename+'_W.pt')
       else: 
@@ -102,7 +104,8 @@ def main(args):
 
     elif (args.aggregation.find('hsl') != -1):
       if (args.W_hs == None):
-          W_hs, W_sh = utils.random_graph(num_hubs, num_spokes, args.num_edges_hs, args.agr)
+          #W_hs, W_sh = utils.random_graph(num_hubs, num_spokes, args.num_edges_hs, args.agr)
+          W_hs, W_sh = utils.greedy_hubs(num_hubs, num_spokes, num_spoke_connections=1, label_distr=label_distr, map_type=args.map_type)
           W_hs, W_sh = W_hs.to(device), W_sh.to(device)
           torch.save(W_hs, filename+'_W_hs.pt')
           torch.save(W_sh, filename+'_W_sh.pt')
@@ -110,7 +113,7 @@ def main(args):
           W_hs = torch.load(args.W_hs).to(device)
           W_sh = torch.load(args.W_sh).to(device)
       if (args.W_h == None):
-          W_h = utils.random_graph(num_hubs, num_hubs, args.num_edges_h, args.agr)
+          W_h = utils.connect_hubs(num_hubs)
           W_h = W_h.to(device)
           torch.save(W_h, filename+'_W_h.pt')
       else: 
@@ -328,7 +331,10 @@ def main(args):
                       local_test_acc[int(rnd/args.eval_time)][i] = correct/total                
                     else:
                       test_acc[int(rnd/args.eval_time)] = correct/total
-                print ('Round: %d, predist: %.3f, postdist: %.3f, test_acc:[%.3f, %.3f]' %(rnd, predist[rnd], postdist[rnd], min(local_test_acc[int(rnd/args.eval_time)]), max(local_test_acc[int(rnd/args.eval_time)])))      
+                if (save_cdist):
+                    print ('Round: %d, predist: %.3f, postdist: %.6f, test_acc:[%.3f, %.3f]->%.3f' %(rnd, predist[rnd], postdist[rnd], min(local_test_acc[int(rnd/args.eval_time)]), max(local_test_acc[int(rnd/args.eval_time)]), test_acc[int(rnd/args.eval_time)]))      
+                else:
+                    print ('Round: %d, test_acc:[%.3f, %.3f]->%.3f' %(rnd, min(local_test_acc[int(rnd/args.eval_time)]), max(local_test_acc[int(rnd/args.eval_time)]), test_acc[int(rnd/args.eval_time)]))      
             if (args.attack != 'benign'): print("Avg ben acc: %.3f, avg mal acc: %.3f" %(local_test_acc[int(rnd/args.eval_time)][mal_flag==0].mean(), local_test_acc[int(rnd/args.eval_time)][mal_flag==1].mean()))
             time_taken = time.time() - start_time
             hrs = int(time_taken/3600)
@@ -340,7 +346,7 @@ def main(args):
             else:
                 np.save(filename+'_local_test_acc.npy', local_test_acc)
                 np.save(filename+'_consensus_test_acc.npy', test_acc)
-                if (args.save_cdist):
+                if (save_cdist):
                     np.save(filename+'_postdist.npy', postdist)
                     np.save(filename+'_predist.npy', predist)
                 if (args.attack != 'benign' and (args.aggregation == 'secure_p2p' or args.aggregation == 'varsec_p2p')):
