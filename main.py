@@ -193,6 +193,7 @@ def main(args):
         if (args.dataset == 'cifar10'):
             lr = utils.get_lr(rnd, num_rounds, lr_init)
         else: lr = lr_init
+        #lr = lr_init
         for worker in range(num_spokes):
             if (args.aggregation == 'fedsgd'):
                 net_local = deepcopy(net_fed)
@@ -200,6 +201,7 @@ def main(args):
                 net_local = deepcopy(nets[worker]) 
             net_local.train()
             optimizer = torch.optim.SGD(net_local.parameters(), lr=lr)
+            #scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')
             #optimizer.zero_grad()
             
             #sample local dataset in a round-robin manner
@@ -216,6 +218,7 @@ def main(args):
                 if (not torch.isnan(loss)): #todo - check why loss can become nan
                     loss.backward()
                     optimizer.step()
+                    #scheduler.step(loss)
             ##append all gradients in a list
             spoke_wts.append([x.detach() for x in net_local.parameters() if x.requires_grad != 'null'])
             #del net_local
