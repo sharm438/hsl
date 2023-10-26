@@ -53,6 +53,7 @@ def parse_args():
     parser.add_argument("--num_edges", help="Out of the lower triangle", default=1, type=float)
     parser.add_argument("--W", help="Whether to load a saved W", default=None, type=str)
     parser.add_argument("--W_type", help="how to generate W", default='random_graph', type=str)
+    parser.add_argument("--budget", help="maximum degree of a node", default='10', type=int)
     parser.add_argument("--map_type", help="greedy or foolish", default='greedy', type=str)
 
     parser.add_argument("--save_time", help="array saving frequency", default=100, type=int)
@@ -186,6 +187,65 @@ def connect_hubs(num_hubs):
         second_hub = (i-1) % num_hubs
         W[i][i] = W[i][first_hub] = W[i][second_hub] = 1/3
     return W
+
+def obj_function(W, PI, lamb):
+
+    nn = PI.shape[0]
+    val = (1/nn)*np.linalg.norm(W.dot(PI)-(1/nn)*np.ones((nn,nn)).dot(PI),'fro')**2
+    val = val + (lamb/nn)*np.linalg.norm(W-(1/nn)*np.ones((nn,nn)),'fro')**2
+    return val
+
+from scipy.optimize import linear_sum_assignment
+
+def franke_wolfe_p2p_graph(PI, lamb, budget, n_max=100):
+    '''
+    Baseline mixing matrix simulation code from ICML 2023.
+
+    Args:
+      PI: Class proportions of all s spokes as rows and class ID as cols.
+      lamb: Hyperparameter quantifying the ratio variance / heterogeneity
+      budget: Maximum number of edges a node can have.
+      n_max: Number of iterations for numberical solution of the FW algorithm.
+
+    Returns: 
+      W_FW: s*s array as the mixing matrix.
+    '''
+
+    n = PI.shape[0]
+    K = PI.shape[1]
+
+    function_value = []
+    W_FW_temp = np.identity(n)
+    b = 0
+    it = 0
+
+    while ((b <= budget) and (it <= n_max)):
+        W_FW = W_FW_temp
+        function_value += [obj_function(W_FW,PI,lamb)]
+
+        vv = W_FW.dot(PI)-np.repeat(np.mean(PI,0).reshape((1,-1)),n,0)
+        vvv = np.sum([np.outer(vv[:,k],PI[:,k]) for k in range(K)],0)
+        grad = (2/n)*vvv + (2/n)*lamb*(W_FW - (1/n)*np.ones((n,n)))
+
+        ind = linear_sum_assignment(grad)
+        P = np.zeros((n,n))
+        P[ind] = 1
+
+        uu = np.mean(PI,0)-W_FW.dot(PI)
+        uuu = (P-W_FW).dot(PI)
+        num = np.sum([np.dot(uu[:,k],uuu[:,k]) for k in range(K)]) - lamb*np.trace((W_FW - (1/n)*np.ones((n,n))).T.dot(P-W_FW))
+        den = np.linalg.norm((P-W_FW).dot(PI),'fro')**2 + lamb*np.linalg.norm(P-W_FW,'fro')**2
+        gamma = num / den
+        if ((gamma < 0) or (gamma>1)):
+            print('Check line-search')
+
+        W_FW_temp = (1-gamma)*W_FW + gamma*P
+        b = np.max(np.sum(W_FW_temp - np.identity(n) > 0,1))
+        it += 1
+
+    return torch.as_tensor(W_FW, dtype=torch.float32)
+
+
 
 def fully_connect(num_spokes):
     ## harcoded

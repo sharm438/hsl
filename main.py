@@ -90,7 +90,12 @@ def main(args):
     #W = utils.k_regular_W(num_spokes, args.k, device)
     if (args.aggregation.find('p2p') != -1):
       if (args.W == None):
-          if (args.W_type == 'random_graph'):
+          if (args.W_type == 'franke_wolfe'):
+            W = utils.franke_wolfe_p2p_graph(label_distr, 0.1, args.budget)
+            nnbrs = [len(np.where(W[i])[0]) for i in range(len(W))]
+            num_edges = (np.asarray(nnbrs).sum() - num_spokes)
+            print("Franke-Wolfe generated %f directional edges" %num_edges)
+          elif (args.W_type == 'random_graph'):
             W = utils.random_graph(num_spokes, num_spokes, args.num_edges, args.agr) #choices: mean, random_static, adjacency_static
             #W = utils.fully_connect(num_spokes)
           elif (args.W_type == 'self_wt'):
