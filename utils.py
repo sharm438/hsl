@@ -110,9 +110,9 @@ def greedy_hubs(num_hubs, num_spokes, num_spoke_connections, label_distr, map_ty
     ## proposed algorithm to mimic global distribution locally
     W_hs = torch.zeros((num_hubs, num_spokes))
     W_sh = torch.zeros((num_spokes, num_hubs))
-    num_hub_connections = int(num_spokes * 2 / num_hubs)
+    num_hub_connections = int(num_spokes * num_spoke_connections / num_hubs)
     global_label_distr_norm = label_distr.sum(0) / label_distr.sum()
-    for i in range(num_hub_connections):
+    for i in range(num_hub_connections+1):
         random_hub_sequence = random.sample(range(num_hubs), num_hubs)
         for hub in random_hub_sequence:
             available_spokes = np.where(W_hs.sum(0) < num_spoke_connections)[0]
@@ -245,7 +245,19 @@ def franke_wolfe_p2p_graph(PI, lamb, budget, n_max=100):
 
     return torch.as_tensor(W_FW, dtype=torch.float32)
 
+def compute_test_accuracy(net, test_data, device):
+    correct = 0
+    total = 0
 
+    with torch.no_grad():
+        for data in test_data:
+            images, labels = data
+            outputs = net(images.to(device))
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels.to(device)).sum().item()
+    return correct/total
+    
 
 def fully_connect(num_spokes):
     ## harcoded

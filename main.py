@@ -127,66 +127,16 @@ def main(args):
           W_g = W_h.clone()
           for i in range(args.g - 1): W_g = torch.matmul(W_h, W_g)
           W_h = W_g
-    #W = utils.local_W(label_distr, device)
-    #W = utils.k_regular_W(args.num_spokes, args.k, device)
-    #W_hs, W_h, W_sh = utils.simulate_hsl_W(args.num_hubs, args.num_spokes, device)
     
-    if (args.attack != 'benign'):
-        if (args.aggregation == 'varsec_p2p' or args.aggregation == 'secure_p2p'):
-            flag = 0
-            real_cmax = np.zeros(num_spokes)
-            capped = np.zeros(num_spokes)
-            hist = np.zeros((num_spokes, num_spokes))
-            local_cmax = np.ones(num_spokes)
-            nnbrs = np.zeros(num_spokes)
-            votes = np.zeros((num_rounds, num_spokes))
-            infc = np.zeros((num_rounds, num_spokes))
-            past_delta = np.zeros(num_spokes)
-            c_lo = num_spokes * np.ones(num_spokes)
-            c_hi = -1 * np.ones(num_spokes)
-            metric_krum = np.zeros((num_rounds, num_spokes, 4))
-            metric_vote = np.zeros((num_rounds, num_spokes, 4))
-            for i in range(num_spokes):
-                row_sum = len(torch.where(W[i]>0)[0])#int(W[i].sum().item())
-                my_nbrs = torch.where(W[i])[0].cpu()
-                nnbrs[i] = len(my_nbrs)
-
-                if (args.aggregation == 'varsec_p2p'): local_cmax[i] = int(np.ceil((args.nbyz/num_spokes)*row_sum))
-                if (args.aggregation == 'secure_p2p'): 
-                    if (nnbrs[i]%2 == 0): local_cmax[i] = int((nnbrs[i]-2)/2)-1
-                    else: local_cmax[i] = int((nnbrs[i]-2)/2)
-                    if (local_cmax[i] == 0):
-                        print("Node %d has %d neighbors, <=4 nbrs have 0 cmax" %(i, nnbrs[i]))
-                        flag = 1
-                    #local_cmax[i] = int(np.ceil((args.nbyz/num_spokes)*row_sum))
-                if (i not in mal_idx): real_cmax[i] = len(np.intersect1d(my_nbrs, mal_idx))
-                if (nnbrs[i] - 2 - 2*real_cmax[i] <= 1): #ideally zero but choosing 1
-                    print("Some nodes do not have enough benign neighbors. Do you want to continue?")
-                    flag = 1
-
-            if (flag): pdb.set_trace()
-            else: print("Graph topology passes security check")
-
-    if (args.attack != 'benign' and args.aggregation == 'hsl'):
-        flag = 0
-        for i in range(len(W_hs)):
-            nnbrs = len(torch.where(W_hs[i])[0].cpu())
-            if (nnbrs <= 4):
-                print("Hub %d has only %d spokes" %(i, nnbrs))
-                flag = 1
-        for i in range(len(W_h)):
-            nnbrs = len(torch.where(W_h[i])[0].cpu())
-            if (nnbrs <= 4):
-                print("Hub %d has only %d neighbors" %(i, nnbrs))
-                flag = 1
-        for i in range(len(W_sh)):
-            nnbrs = len(torch.where(W_sh[i])[0].cpu())
-            if (nnbrs <= 4):
-                print("Spoke %d has only %d hubs" %(i, nnbrs))
-                flag = 1
-        if (flag == 1):
-            print("Do you want to continue?")
-            pdb.set_trace()
+      hub_to_spokes = {}
+      spoke_to_hubs = {}
+      for h in range(len(W_hs)):
+        if h not in hub_to_spokes: hub_to_spokes[h] = []
+        for s in range(len(W_hs[0])):
+          if s not in spoke_to_hubs: spoke_to_hubs[s] = []
+          if (W_hs[h][s]): hub_to_spokes[h].append(s)
+          if (W_sh[s][h]): spoke_to_hubs[s].append(h)
+          
 
     time_taken = time.time() - start_time
     mins = time_taken // 60
@@ -239,61 +189,15 @@ def main(args):
         else:
             save_cdist = 0
         if (args.aggregation == 'p2p'):
-            #W = wts.repeat((len(W), 1))
             past_avg_wts, spoke_wts, predist_val, postdist_val = aggregation.p2p(device, rnd, args.dataset, args.g, W, past_avg_wts, spoke_wts, byz, args.attack_prob, lamda, mal_flag, save_cdist) 
             r = int(rnd / args.eval_time)
             predist[r], postdist[r] = predist_val, postdist_val
              
-            #for i in range(num_spokes):
-            #    nets[i] = utils.vec_to_model(global_wts[i], args.net, inp_dim, out_dim, torch.device('cuda'))
-            #grad_list = torch.stack([(torch.cat([xx.reshape((-1)) for xx in x], dim=0)).squeeze(0) for x in grad_list])
-            #net_fed = utils.vec_to_model(torch.matmul(wts, grad_list), args.net, inp_dim, num_outputs, torch.device('cuda'))
 
         elif (args.aggregation == 'hsl'):
             spoke_wts, predist_val, postdist_val = aggregation.hsl(device, rnd, args.dataset, args.g, W_hs, W_h, W_sh, past_avg_wts, spoke_wts, byz, args.attack_prob, lamda, mal_flag, save_cdist, args.threat_model)
             r = int(rnd / args.eval_time)
             predist[r], postdist[r] = predist_val, postdist_val
-
-        elif (args.aggregation == 'secure_p2p'):
-            fmax = args.nbyz / args.num_spokes
-            
-            past_avg_wts, spoke_wts, predist[rnd], postdist[rnd], secure_W = aggregation.secure_p2p(device, rnd, args.dataset, args.g, W, past_avg_wts, spoke_wts, byz, args.attack_prob, lamda, mal_flag, real_cmax, local_cmax, metric_krum, infc)
-            W_effective[rnd] = secure_W.to('cpu')
-            #if (rnd%args.eval_time ==0 and rnd > 0):
-            #    r = rnd / args.eval_time
-            #    avg_W = (avg_W*(r-1) + secure_W) / (r)
-            #    contr = secure_W.sum(axis=0) - torch.diagonal(secure_W)
-            #    avg_contr = avg_W.sum(axis=0) - torch.diagonal(avg_W)
-            #    infc = secure_W[:][:,mal_idx].sum(axis=0)
-            #    infc[mal_idx] = 0
-            #    avg_infc = (avg_infc*(r-1) + infc) / (r)
-            #    print("This round: ben contr = %.3f, mal contr = %.3f, infc = %.3f" %(contr[np.where(mal_flag==0)[0]].mean(), contr[np.where(mal_flag==1)[0]].mean(), infc.sum().item()))
-            #    print("Running avg: ben contr = %.3f, mal contr = %.3f, infc = %.3f" %(avg_contr[np.where(mal_flag==0)[0]].mean(), avg_contr[np.where(mal_flag==1)[0]].mean(), avg_infc.sum().item()))
-            
-
-        elif (args.aggregation == 'varsec_p2p'):
-            #fmax = args.nbyz / args.num_spokes
-            
-            past_avg_wts, spoke_wts, predist[rnd], postdist[rnd], secure_W, local_cmax, past_delta = aggregation.varsec_p2p(device, rnd, votes, args.g, W, past_avg_wts, spoke_wts, byz, lamda, mal_flag, local_cmax, real_cmax, capped, hist, args.th_lo, args.th_hi, infc, past_delta, c_lo, c_hi, args.p, metric_krum, metric_vote)
-            #votes[rnd] = vote
-            W_effective[rnd] = secure_W.to('cpu')
-            #if (rnd%args.eval_time ==0 and rnd > 0):
-            #    r = rnd / args.eval_time
-            #    avg_W = (avg_W*(r-1) + secure_W) / (r)
-            #    secure_W[mal_idx][:,mal_idx]=0
-            #    avg_W[mal_idx][:,mal_idx]=0
-            #    for i in range(num_spokes): secure_W[i][i] = 0
-            #    pdb.set_trace()
-            #    contr = secure_W.sum(axis=0)
-            #    #avg_contr = avg_W.sum(axis=0)
-            #    #pdb.set_trace()
-            #    #contr = secure_W.sum(axis=0) - torch.diagonal(secure_W)
-            #    avg_contr = avg_W.sum(axis=0) - torch.diagonal(avg_W)
-            #    infc = secure_W[:][:,mal_idx].sum(axis=0)
-            #    infc[mal_idx] = 0
-            #    avg_infc = (avg_infc*(r-1) + infc) / (r)
-            #    print("This round: ben contr = %.3f, mal contr = %.3f, infc = %.3f" %(contr[np.where(mal_flag==0)[0]].mean(), contr[np.where(mal_flag==1)[0]].mean(), infc.sum().item()))
-            #    print("Running avg: ben contr = %.3f, mal contr = %.3f, infc = %.3f" %(avg_contr[np.where(mal_flag==0)[0]].mean(), avg_contr[np.where(mal_flag==1)[0]].mean(), avg_infc.sum().item()))
 
         elif (args.aggregation == 'secure_hsl'):
             spoke_wts, predist[rnd], postdist[rnd] = aggregation.secure_hsl(device, W_hs, W_h, W_sh, spoke_wts, byz, mal_flag)
@@ -323,27 +227,28 @@ def main(args):
                 print('Round: %d, test_acc: %.3f' %(rnd, fed_test_acc[int(rnd/args.eval_time)]))
             else:
                 traced_models = []
-                for i in range(num_spokes + 1):
-                    if i < num_spokes:
-                      traced_models.append(torch.jit.trace(nets[i], torch.randn(dummy_data_shape).to(device))) 
+                #Below code is optimized to avoid redundant calculation for spokes under the same hub, and general enough to accommodate p2p int he same block: see smart use of 'var'
+                if (args.aggregation == 'p2p'): var = num_spokes
+                elif (args.aggregation == 'hsl'): var = num_hubs
+                for i in range(var + 1):
+                    if i < var:
+                      if (args.aggregation == 'hsl'):
+                          spoke_id = hub_to_spokes[i][0]
+                      elif (args.aggregation == 'p2p'):
+                          spoke_id = i
+                      traced_models.append(torch.jit.trace(nets[spoke_id], torch.randn(dummy_data_shape).to(device))) 
                     else:
                       traced_models.append(torch.jit.trace(avg_model, torch.randn(dummy_data_shape).to(device)))
 
-                    correct = 0
-                    total = 0
-                    
-                    with torch.no_grad():
-                        for data in test_data:
-                            images, labels = data
-                            outputs = traced_models[i](images.to(device))
-                            _, predicted = torch.max(outputs.data, 1)
-                            total += labels.size(0)
-                            correct += (predicted == labels.to(device)).sum().item()
 
-                    if (i < num_spokes):
-                      local_test_acc[int(rnd/args.eval_time)][i] = correct/total                
+                    acc = utils.compute_test_accuracy(traced_models[i], test_data, device)
+                    if (i < var):
+                      local_test_acc[int(rnd/args.eval_time)][spoke_id] = acc                
+                      if (args.aggregation == 'hsl'):
+                        for spoke_id in hub_to_spokes[i][1:]:
+                          local_test_acc[int(rnd/args.eval_time)][spoke_id] = acc                
                     else:
-                      test_acc[int(rnd/args.eval_time)] = correct/total
+                      test_acc[int(rnd/args.eval_time)] = acc
                 if (save_cdist):
                     print ('Round: %d, predist: %.3f, postdist: %.6f, test_acc:[%.3f, %.3f]->%.3f' %(rnd, predist[int(rnd/args.eval_time)], postdist[int(rnd/args.eval_time)], min(local_test_acc[int(rnd/args.eval_time)]), max(local_test_acc[int(rnd/args.eval_time)]), test_acc[int(rnd/args.eval_time)]))      
                 else:
