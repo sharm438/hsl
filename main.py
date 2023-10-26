@@ -74,8 +74,8 @@ def main(args):
     criterion = nn.CrossEntropyLoss()
     test_acc = np.empty(int(num_rounds/args.eval_time))
     local_test_acc = np.zeros((int(num_rounds/args.eval_time), num_spokes))
-    predist = np.zeros(num_rounds)
-    postdist = np.zeros(num_rounds)
+    predist = np.zeros(int(num_rounds/args.eval_time))
+    postdist = np.zeros(int(num_rounds/args.eval_time))
     #Count the number of parameters
     P = 0
     for param in net.parameters():
@@ -240,14 +240,19 @@ def main(args):
             save_cdist = 0
         if (args.aggregation == 'p2p'):
             #W = wts.repeat((len(W), 1))
-            past_avg_wts, spoke_wts, predist[rnd], postdist[rnd] = aggregation.p2p(device, rnd, args.dataset, args.g, W, past_avg_wts, spoke_wts, byz, args.attack_prob, lamda, mal_flag, save_cdist) 
+            past_avg_wts, spoke_wts, predist_val, postdist_val = aggregation.p2p(device, rnd, args.dataset, args.g, W, past_avg_wts, spoke_wts, byz, args.attack_prob, lamda, mal_flag, save_cdist) 
+            r = int(rnd / args.eval_time)
+            predist[r], postdist[r] = predist_val, postdist_val
+             
             #for i in range(num_spokes):
             #    nets[i] = utils.vec_to_model(global_wts[i], args.net, inp_dim, out_dim, torch.device('cuda'))
             #grad_list = torch.stack([(torch.cat([xx.reshape((-1)) for xx in x], dim=0)).squeeze(0) for x in grad_list])
             #net_fed = utils.vec_to_model(torch.matmul(wts, grad_list), args.net, inp_dim, num_outputs, torch.device('cuda'))
 
         elif (args.aggregation == 'hsl'):
-            spoke_wts, predist[rnd], postdist[rnd] = aggregation.hsl(device, rnd, args.dataset, args.g, W_hs, W_h, W_sh, past_avg_wts, spoke_wts, byz, args.attack_prob, lamda, mal_flag, save_cdist, args.threat_model)
+            spoke_wts, predist_val, postdist_val = aggregation.hsl(device, rnd, args.dataset, args.g, W_hs, W_h, W_sh, past_avg_wts, spoke_wts, byz, args.attack_prob, lamda, mal_flag, save_cdist, args.threat_model)
+            r = int(rnd / args.eval_time)
+            predist[r], postdist[r] = predist_val, postdist_val
 
         elif (args.aggregation == 'secure_p2p'):
             fmax = args.nbyz / args.num_spokes
@@ -340,7 +345,7 @@ def main(args):
                     else:
                       test_acc[int(rnd/args.eval_time)] = correct/total
                 if (save_cdist):
-                    print ('Round: %d, predist: %.3f, postdist: %.6f, test_acc:[%.3f, %.3f]->%.3f' %(rnd, predist[rnd], postdist[rnd], min(local_test_acc[int(rnd/args.eval_time)]), max(local_test_acc[int(rnd/args.eval_time)]), test_acc[int(rnd/args.eval_time)]))      
+                    print ('Round: %d, predist: %.3f, postdist: %.6f, test_acc:[%.3f, %.3f]->%.3f' %(rnd, predist[int(rnd/args.eval_time)], postdist[int(rnd/args.eval_time)], min(local_test_acc[int(rnd/args.eval_time)]), max(local_test_acc[int(rnd/args.eval_time)]), test_acc[int(rnd/args.eval_time)]))      
                 else:
                     print ('Round: %d, test_acc:[%.3f, %.3f]->%.3f' %(rnd, min(local_test_acc[int(rnd/args.eval_time)]), max(local_test_acc[int(rnd/args.eval_time)]), test_acc[int(rnd/args.eval_time)]))      
             if (args.attack != 'benign'): print("Avg ben acc: %.3f, avg mal acc: %.3f" %(local_test_acc[int(rnd/args.eval_time)][mal_flag==0].mean(), local_test_acc[int(rnd/args.eval_time)][mal_flag==1].mean()))
