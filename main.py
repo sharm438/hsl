@@ -111,6 +111,7 @@ def main(args):
       if (args.W_hs == None):
           #W_hs, W_sh = utils.random_graph(num_hubs, num_spokes, args.num_edges_hs, args.agr)
           W_hs, W_sh = utils.greedy_hubs(num_hubs, num_spokes, num_spoke_connections=1, label_distr=label_distr, map_type=args.map_type)
+          num_spoke_connections = 1
           W_hs, W_sh = W_hs.to(device), W_sh.to(device)
           torch.save(W_hs, filename+'_W_hs.pt')
           torch.save(W_sh, filename+'_W_sh.pt')
@@ -229,7 +230,8 @@ def main(args):
                 traced_models = []
                 #Below code is optimized to avoid redundant calculation for spokes under the same hub, and general enough to accommodate p2p int he same block: see smart use of 'var'
                 if (args.aggregation == 'p2p'): var = num_spokes
-                elif (args.aggregation == 'hsl'): var = num_hubs
+                #TODO - fix the if else loop to cover all cases
+                elif (args.aggregation == 'hsl' and num_spoke_connections==1): var = num_hubs
                 for i in range(var + 1):
                     if i < var:
                       if (args.aggregation == 'hsl'):
