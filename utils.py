@@ -16,6 +16,12 @@ import random
 
 import attrs
 
+import resnet_cifar
+import resnet_tinyim_net
+import os
+
+import networkx as nx
+
 @attrs.define(frozen=False)
 class TrainObject:
     dataset_name: str
@@ -35,36 +41,34 @@ class DistributedData:
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--num_spokes", help="# clients", default=10, type=int)
+    parser.add_argument("--aggregation", help="aggregation rule", default='p2p', type=str)
+    parser.add_argument("--num_spokes", help="# clients", default=20, type=int)
     parser.add_argument("--num_hubs", help="# servers", default=1, type=int)
     parser.add_argument("--num_rounds", help="# training rounds", default=500, type=int)
-    parser.add_argument("--num_local_iters", help="# local iterations", default=5, type=int)
+    parser.add_argument("--num_local_iters", help="# local iterations", default=1, type=int)
 
     parser.add_argument("--gpu", help="index of gpu", default=0, type=int)
     parser.add_argument("--exp", help="Experiment name", default='', type=str)
 
-    parser.add_argument("--dataset", help="dataset", default='cifar10', type=str)
+    parser.add_argument("--dataset", help="dataset", default='mnist', type=str)
     parser.add_argument("--bias", help="degree of non-IID to assign data to workers", type=float, default=0.5)
-
-    parser.add_argument("--attack", help="type of attack", default='benign', type=str, choices=['benign', 'full_trim', 'full_krum', 'adaptive_trim', 'adaptive_krum', 'shejwalkar', 'shej_agnostic'])
-    parser.add_argument("--nbyz", help="# byzantines", default=0, type=int)
-    parser.add_argument("--aggregation", help="aggregation rule", default='p2p', type=str)
-    parser.add_argument("--cmax", help="PRISM's notion of c_max", default=0, type=int)
-    parser.add_argument("--num_edges", help="Out of the lower triangle", default=1, type=float)
-    parser.add_argument("--W", help="Whether to load a saved W", default=None, type=str)
-    parser.add_argument("--W_type", help="how to generate W", default='random_graph', type=str)
-    parser.add_argument("--budget", help="maximum degree of a node", default='10', type=int)
-    parser.add_argument("--map_type", help="greedy or foolish", default='greedy', type=str)
+    parser.add_argument("--seed", help="seed for model init", default=108, type=int)
 
     parser.add_argument("--save_time", help="array saving frequency", default=100, type=int)
     parser.add_argument("--eval_time", help="evaluation frequency", default=10, type=int)
-    parser.add_argument("--self_wt", help="Weight assigned to self in gossip averaging", default=None, type=float)
-    parser.add_argument("--mal_idx", help="malicious client indices", default=None, type=str) 
-    parser.add_argument("--graph_type", help="k-regular or power-law", default='k-regular', type=str)
-    parser.add_argument("--min_degree", help="min in-degree for power law", default=None, type=int)
-    parser.add_argument("--max_degree", help="max in-degree for power law", default=None, type=int)
 
-    parser.add_argument("--interc_prob", help="prob of inter cluster edges in cluster_W", default=None, type=float)
+    parser.add_argument("--num_edges", help="Out of the lower triangle", default=1, type=float)
+    parser.add_argument("--W", help="Whether to load a saved W", default=None, type=str)
+    parser.add_argument("--W_type", help="k-regular, erdos-renyi, franke-wolfe", default='k-regular', type=str)
+    parser.add_argument("--max_degree", help="maximum degree of a node", default='10', type=int)
+    parser.add_argument("--map_type", help="greedy or foolish", default='greedy', type=str)
+
+    parser.add_argument("--spoke_budget", help="number of hubs a spoke connects to", default=1, type=int)
+
+
+    parser.add_argument("--self_wt", help="Weight assigned to self in gossip averaging", default=None, type=float)
+
+
     parser.add_argument("--agr", help="aggregation", default="mean", choices=["mean", "random_static", "random_dynamic", "adjacency_static"])
     parser.add_argument("--W_hs", help="Whether to load a saved W_hs", default=None, type=str)
     parser.add_argument("--W_sh", help="Whether to load a saved W_sh", default=None, type=str)
@@ -73,11 +77,6 @@ def parse_args():
     parser.add_argument("--num_edges_h", help="Out of the lower triangle nhubs*(nhubs-1)/2", default=1, type=float)
     parser.add_argument("--save_cdist", help="whether to save predist and postdist", default=1, type=int)
     parser.add_argument("--g", help="number of gossip steps", default=1, type=int)
-    parser.add_argument("--th_lo", help="downvote threshold", default=0, type=int)
-    parser.add_argument("--th_hi", help="upvote threshold", default=0, type=int)
-    parser.add_argument("--p", help="prob of decrementing cmax", default=0.5, type=float)
-    parser.add_argument("--threat_model", help="for hsl", default="benign", choices=["benign", "spokes", "hubs", "both"])
-    parser.add_argument("--attack_prob", help="prob to attack every odd round", default=1, type=float)
     return parser.parse_args()
 
 
@@ -138,7 +137,7 @@ def greedy_hubs(num_hubs, num_spokes, num_spoke_connections, label_distr, map_ty
                         min_kl_div = kl_div
                         closest_spoke = spoke
             if closest_spoke != -1:
-                print("Hub %d chose spoke %d" %(hub, closest_spoke))
+                #print("Hub %d chose spoke %d" %(hub, closest_spoke))
                 W_hs[hub][closest_spoke] = 1
                 W_sh[closest_spoke][hub] = 1
                 hub_label_distr += label_distr[closest_spoke]
@@ -186,6 +185,20 @@ def connect_hubs(num_hubs):
         first_hub = (i+1) % num_hubs
         second_hub = (i-1) % num_hubs
         W[i][i] = W[i][first_hub] = W[i][second_hub] = 1/3
+    return W
+
+def erdos_renyi(num_nodes, num_edges, seed):
+
+    W = torch.zeros((num_nodes, num_nodes))
+    G = nx.gnm_random_graph(num_nodes, num_edges, seed=seed)
+    for node in G.nodes:
+        for nbr in G.adj[node]:
+            W[node][nbr] = 1
+        if (W[node].sum() < 1):
+            print ("Some nodes are isolated, restart.")
+            exit(-1)
+        W[node][node] = 1
+        W[node] /= W[node].sum()
     return W
 
 def obj_function(W, PI, lamb):
@@ -243,7 +256,14 @@ def franke_wolfe_p2p_graph(PI, lamb, budget, n_max=100):
         b = np.max(np.sum(W_FW_temp - np.identity(n) > 0,1))
         it += 1
 
-    return torch.as_tensor(W_FW, dtype=torch.float32)
+    nnbrs = [len(np.where(W_FW[i])[0]) for i in range(len(W_FW))]
+    num_directed_edges = (np.asarray(nnbrs).sum() - n)
+    num_connections = 0
+    for i in range(len(W_FW)):
+        for j in range(i):
+            if (W_FW[i][j] or W_FW[j][i]):
+                num_connections += 1
+    return torch.as_tensor(W_FW, dtype=torch.float32), num_connections, num_directed_edges
 
 def compute_test_accuracy(net, test_data, device):
     correct = 0
@@ -266,6 +286,7 @@ def fully_connect(num_spokes):
 
 def random_graph(nrows, ncols, nedges, agr="mean"):
 
+    # If all nodes are peers
     if (nrows == ncols): 
         W = torch.zeros((nrows, ncols))
         nedges_rem = int(nedges)
@@ -295,6 +316,7 @@ def random_graph(nrows, ncols, nedges, agr="mean"):
         elif (agr == 'adjacency_static'): return W
         return W
 
+    # If nodes can have different roles of hubs and spokes.
     else:
         W_hs = torch.zeros((nrows, ncols))
         W_sh = torch.zeros((ncols, nrows))
@@ -464,7 +486,8 @@ def vec_to_model(vec, net_name, num_inp, num_out, device):
                 idx += param[1].nelement()
     return net
 
-def create_model(net, net_name, num_inp, num_outp, seed):
+def create_model(net, net_name, num_inp, num_outp, seed=None):
+
     created_net = load_net(net_name, num_inp, num_outp, torch.device('cuda'), seed)
     with torch.no_grad():
         idx = 0
@@ -562,13 +585,18 @@ def load_net(net_name, num_inputs, num_outputs, device, seed=None):
 
     if (seed): torch.manual_seed(seed)
     if (net_name == 'resnet18'):
-        net = nets.ResNet18()
+        #net = nets.ResNet18()
+        net = resnet_cifar.ResNet18()
+    elif (net_name == 'resnet-tiny'):
+        net = resnet_tinyim_net.ResNet18()
     elif(net_name == 'dnn'):
         net = nets.DNN()
     elif(net_name == 'lstm'):
         n_characters = len(string.printable)
         net = nets.CharRNN(n_characters, 128, n_characters, 'lstm', 2)
     net.to(device) 
+    if seed == 0:
+        net.load_state_dict(torch.load('outputs/_model.pth'))
     return net
 
 def load_byz(byz_name):
@@ -589,6 +617,26 @@ def load_byz(byz_name):
         byz = attack.shej_agnostic
 
     return byz
+
+def create_test_img_folder_for_imagenet():
+
+    path = 'data/tiny-imagenet-200/val/'
+    img_dir = os.path.join(path, 'images')
+    fp = open(os.path.join(path, 'val_annotations.txt'), 'r')
+    data = fp.readlines()
+    img_dict = {}
+    for line in data:
+        words = line.split('\t')
+        img_dict[words[0]] = words[1]
+    fp.close()
+
+    for img, folder in img_dict.items():
+        newpath = (os.path.join(img_dir, folder))
+        if not os.path.exists(newpath):
+            os.makedirs(newpath)
+        if os.path.exists(os.path.join(img_dir, img)):
+            os.rename(os.path.join(img_dir, img), os.path.join(newpath, img))
+
 
 def load_data(dataset_name):
 
@@ -668,7 +716,7 @@ def load_data(dataset_name):
         num_inputs = 32*32*3
         num_outputs = 10
         net_name = 'resnet18'
-        batch_size, lr = 128, 0.1
+        batch_size, lr = 128, 0.01
 
         transform_train = transforms.Compose([
                               transforms.RandomCrop(32, padding=4),
@@ -704,7 +752,41 @@ def load_data(dataset_name):
                     )
 
         del trainset, testset
-       
+    
+    elif dataset_name == 'imagenet':
+
+        #create_test_img_folder_for_imagenet()
+        num_inputs, num_outputs = 64*64*3, 200
+        net_name, batch_size, lr = 'resnet-tiny', 256, 0.001
+        transform_train = transforms.Compose([
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5,0.5,0.5), (0.5,0.5,0.5)),
+            ])
+        transform_test = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.5,0.5,0.5), (0.5,0.5,0.5)),
+            ])
+        trainset = torchvision.datasets.ImageFolder(
+                root='./data/tiny-imagenet-200/train/',
+                transform=transform_train
+                )
+        train_data = torch.utils.data.DataLoader(
+                         trainset,
+                         batch_size=batch_size,
+                         shuffle=True
+                     )
+        testset = torchvision.datasets.ImageFolder(
+                root='./data/tiny-imagenet-200/val/images/',
+                transform=transform_test
+                )
+        test_data = torch.utils.data.DataLoader(
+                         testset,
+                         batch_size=batch_size,
+                         shuffle=True
+                     )
+        del trainset, testset
+
     elif dataset_name == 'shakespeare':
         print("Loading Shakespeare dataset")
         file, file_len = read_file('shakespeare.txt')
@@ -716,6 +798,8 @@ def load_data(dataset_name):
     trainObject = TrainObject(dataset_name, net_name, train_data, test_data, num_inputs, num_outputs, lr, batch_size)
 
     return trainObject
+
+
 
 def distribute_data_by_label(device,
                              batch_size,

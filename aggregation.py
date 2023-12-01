@@ -262,7 +262,7 @@ def hsl(device, rnd, dataset, g, W_hs, W_h, W_sh, past_avg_wts, spoke_wts, byz, 
     return spoke_wts, pre_cdist, post_cdist
 
 
-def p2p(device, rnd, dataset, g, W, past_avg_wts, spoke_wts, byz, attack_prob, lamda, mal_idx, save_cdist=0):
+def p2p(device, rnd, dataset, g, W, spoke_wts, save_cdist=0):
     pre_cdist, post_cdist = 0, 0
     if (save_cdist): pre_cdist = torch.sum((spoke_wts-torch.mean(spoke_wts, dim=0))**2)/len(W)
     
@@ -270,11 +270,11 @@ def p2p(device, rnd, dataset, g, W, past_avg_wts, spoke_wts, byz, attack_prob, l
     #W = utils.simulate_W(len(wts), 3, device)
     for i in range(g):
         #pdb.set_trace()
-        spoke_wts, past_avg_weights, lamda[rnd] = byz(device, rnd, attack_prob, past_avg_wts, spoke_wts, mal_idx, 'unit_vec', 'ben', 'p2p', dataset)
+        #spoke_wts, past_avg_weights, lamda[rnd] = byz(device, rnd, attack_prob, past_avg_wts, spoke_wts, mal_idx, 'unit_vec', 'ben', 'p2p', dataset)
         spoke_wts = torch.mm(W, spoke_wts)
     #del param_list
     if (save_cdist): post_cdist = torch.sum((spoke_wts-torch.mean(spoke_wts, dim=0))**2)/len(W)
-    return past_avg_wts, spoke_wts, pre_cdist, post_cdist
+    return spoke_wts, pre_cdist, post_cdist
 
 def flair(device, byz, lr, grad_list, net, old_direction, susp, fs, cmax, weight):
     
