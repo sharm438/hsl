@@ -223,41 +223,15 @@ def aggr1(W_hs, spoke_wts, level):
 
 
 
-def hsl(device, rnd, dataset, g, W_hs, W_h, W_sh, past_avg_wts, spoke_wts, byz, attack_prob, lamda, mal_idx, save_cdist=0, threat_model='benign'):
+def hsl(device, rnd, dataset, g, W_hs, W_h, W_sh, spoke_wts, byz, save_cdist=0):
     pre_cdist, post_cdist = 0, 0
     if (save_cdist): pre_cdist = torch.sum((spoke_wts-torch.mean(spoke_wts, dim=0))**2)/len(spoke_wts)
 
-    if (threat_model == 'benign'):
-        if (g == 1):
-            spoke_wts = torch.mm(torch.mm(W_sh, torch.mm(W_h, W_hs)), spoke_wts)
-        else:
-            spoke_wts = torch.mm(torch.mm(W_sh, torch.mm(torch.matrix_power(W_h, g), W_hs)), spoke_wts)   
+    if (g == 1):
+        spoke_wts = torch.mm(torch.mm(W_sh, torch.mm(W_h, W_hs)), spoke_wts)
     else:
-        if (threat_model == 'spokes'):
-            spoke_wts, past_avg_wts, lamda[rnd] = byz(device, rnd, attack_prob, past_avg_wts, spoke_wts, mal_idx, 'unit_vec', 'ben', 'p2p', dataset)
-            secure_W_hs = aggr1(W_hs, spoke_wts, 'first')
-            spoke_wts = torch.mm(secure_W_hs, spoke_wts)
-            for i in range(g):
-                ### compute secure_weights 
-                secure_W_h = aggr1(W_h, spoke_wts, 'second')
-                spoke_wts = torch.mm(secure_W_h, spoke_wts)
-            secure_W_sh = aggr1(W_sh, spoke_wts, 'third')
-            spoke_wts = torch.mm(secure_W_sh, spoke_wts)
-        elif (threat_model == 'hubs'):
-            ## W_hs should still be secure
-            spoke_wts = torch.mm(W_hs, spoke_wts)
-            for i in range(g):
-                ## attack goes on in every round
-                spoke_wts = torch.mm(W_h, spoke_wts)
-        elif (threat_model == 'hubs-and-spokes'):
-            print("Do the needful")
-        elif (threat_model == 'benign'):
-            spoke_wts = torch.mm(W_h, spoke_wts)
-            for i in range (g): spoke_wts = torch.mm(W_h, spoke_wts)
-        else: print("Choose the threat model")
-        #spoke_wts = torch.mm(W_sh, spoke_wts)
-        
-    #del hub_wts
+        spoke_wts = torch.mm(torch.mm(W_sh, torch.mm(torch.matrix_power(W_h, g), W_hs)), spoke_wts)   
+
     if (save_cdist): post_cdist = torch.sum((spoke_wts-torch.mean(spoke_wts, dim=0))**2)/len(spoke_wts)
     return spoke_wts, pre_cdist, post_cdist
 

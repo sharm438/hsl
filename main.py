@@ -99,7 +99,7 @@ def main(args):
     elif (args.aggregation == 'hsl'):
       if (args.W_hs == None):
           #W_hs, W_sh = utils.random_graph(num_hubs, num_spokes, args.num_edges_hs, args.agr)
-          W_hs, W_sh = utils.greedy_hubs(num_hubs, num_spokes, num_spoke_connections=args.spoke_budget, label_distr=label_distr, map_type=args.map_type)
+          W_hs, W_sh, hub_to_spokes, spoke_to_hubs = utils.greedy_hubs(num_hubs, num_spokes, num_spoke_connections=args.spoke_budget, label_distr=label_distr, map_type=args.map_type)
           num_spoke_connections = args.spoke_budget
           W_hs, W_sh = W_hs.to(device), W_sh.to(device)
           torch.save(W_hs, filename+'_W_hs.pt')
@@ -108,7 +108,7 @@ def main(args):
           W_hs = torch.load(args.W_hs).to(device)
           W_sh = torch.load(args.W_sh).to(device)
       if (args.W_h == None):
-          W_h = utils.connect_hubs(num_hubs)
+          W_h = utils.connect_hubs(num_hubs, args.k)
           W_h = W_h.to(device)
           torch.save(W_h, filename+'_W_h.pt')
       else: 
@@ -118,15 +118,6 @@ def main(args):
           for i in range(args.g - 1): W_g = torch.matmul(W_h, W_g)
           W_h = W_g
     
-      hub_to_spokes = {}
-      spoke_to_hubs = {}
-      for h in range(len(W_hs)):
-        if h not in hub_to_spokes: hub_to_spokes[h] = []
-        for s in range(len(W_hs[0])):
-          if s not in spoke_to_hubs: spoke_to_hubs[s] = []
-          if (W_hs[h][s]): hub_to_spokes[h].append(s)
-          if (W_sh[s][h]): spoke_to_hubs[s].append(h)
-          
 
     time_taken = time.time() - start_time
     mins = time_taken // 60
@@ -195,7 +186,7 @@ def main(args):
              
 
         elif (args.aggregation == 'hsl'):
-            spoke_wts, predist_val, postdist_val = aggregation.hsl(device, rnd, args.dataset, args.g, W_hs, W_h, W_sh, past_avg_wts, spoke_wts, byz, args.attack_prob, lamda, mal_flag, save_cdist, args.threat_model)
+            spoke_wts, predist_val, postdist_val = aggregation.hsl(device, rnd, args.dataset, args.g, W_hs, W_h, W_sh, spoke_wts, save_cdist)
             r = int(rnd / args.eval_time)
             predist[r], postdist[r] = predist_val, postdist_val
 
