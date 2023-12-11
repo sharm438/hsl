@@ -16,8 +16,9 @@ import random
 
 import attrs
 
-import resnet_cifar
-import resnet_tinyim_net
+import models
+import models.resnet_cifar as resnet_cifar
+import models.resnet_tinyim_net as resnet_tinyim_net
 import os
 
 import networkx as nx
@@ -64,6 +65,7 @@ def parse_args():
     parser.add_argument("--map_type", help="greedy or foolish", default='greedy', type=str)
 
     parser.add_argument("--spoke_budget", help="number of hubs a spoke connects to", default=1, type=int)
+    parser.add_argument("--k", help="parameter for random regular graph", default=2, type=int)
 
 
     parser.add_argument("--self_wt", help="Weight assigned to self in gossip averaging", default=None, type=float)
@@ -73,8 +75,6 @@ def parse_args():
     parser.add_argument("--W_hs", help="Whether to load a saved W_hs", default=None, type=str)
     parser.add_argument("--W_sh", help="Whether to load a saved W_sh", default=None, type=str)
     parser.add_argument("--W_h", help="Whether to load a saved W_h", default=None, type=str)
-    parser.add_argument("--num_edges_hs", help="Out of nhubs*nspokes", default=1, type=float)
-    parser.add_argument("--num_edges_h", help="Out of the lower triangle nhubs*(nhubs-1)/2", default=1, type=float)
     parser.add_argument("--save_cdist", help="whether to save predist and postdist", default=1, type=int)
     parser.add_argument("--g", help="number of gossip steps", default=1, type=int)
     return parser.parse_args()
@@ -101,9 +101,6 @@ def label_distr(labels, nlabels):
 
     return distr
 
-def plaw_graph(nnodes, exp):
-
-    return W
 
 def greedy_hubs(num_hubs, num_spokes, num_spoke_connections, label_distr, map_type):
     ## proposed algorithm to mimic global distribution locally
@@ -154,37 +151,32 @@ def greedy_hubs(num_hubs, num_spokes, num_spoke_connections, label_distr, map_ty
         if (num_connections != num_spoke_connections):
             print("Spoke %d has %d connections but needed %d connections" %(spoke, num_connections, num_spoke_connections))
         W_sh[spoke] /= W_sh[spoke].sum()
-    return W_hs, W_sh
+    hub_to_spokes = {}
+    spoke_to_hubs = {}
+    for h in range(len(W_hs)):
+        if h not in hub_to_spokes: hub_to_spokes[h] = []
+        for s in range(len(W_hs[0])):
+            if s not in spoke_to_hubs: spoke_to_hubs[s] = []
+            if (W_hs[h][s]): hub_to_spokes[h].append(s)
+            if (W_sh[s][h]): spoke_to_hubs[s].append(h)
+    return W_hs, W_sh, hub_to_spokes, spoke_to_hubs
 
 def compute_kl_div(p, q):
     p = np.where(p==0, 1e-10, p)
     q = np.where(q==0, 1e-10, q)
     kl_div = np.sum(p * np.log(p/q))
     return kl_div
-
-def assign_hubs(num_hubs, num_spokes, label_distr):
-    ## toy setup
-    ## works when num_spokes is a multiple of num_labels and also num_hubs
-    ## harcoded
-    majority_label = np.argmax(label_distr, axis=1)
-    W_hs = torch.zeros((num_hubs, num_spokes))
-    W_sh = torch.zeros((num_spokes, num_hubs))
-    for i in range(num_spokes):
-        first_hub = majority_label[i]//2
-        second_hub = (first_hub + 1) % num_hubs
-        W_sh[i][first_hub] = W_sh[i][second_hub] = 0.5
-        W_hs[first_hub][i] = W_hs[second_hub][i] = 1
-    for i in range(num_hubs):
-        W_hs[i] = W_hs[i] / W_hs[i].sum()
-    return W_hs, W_sh
-
-def connect_hubs(num_hubs):
+# TODO - incorrect code, works right for k=2, but see what k=3 does, makes a node make 4 neighbors
+def connect_hubs(num_hubs, k):
     ## hardcoded to connect in a ring
     W = torch.zeros((num_hubs, num_hubs))
     for i in range(num_hubs):
-        first_hub = (i+1) % num_hubs
-        second_hub = (i-1) % num_hubs
-        W[i][i] = W[i][first_hub] = W[i][second_hub] = 1/3
+        W[i][i] = 1
+        for j in range(1, k):
+            first_hub = (i+j) % num_hubs
+            second_hub = (i-j) % num_hubs
+            W[i][first_hub] = W[i][second_hub] = 1
+        W[i] = W[i] / W[i].sum()
     return W
 
 def erdos_renyi(num_nodes, num_edges, seed):
@@ -383,23 +375,6 @@ def cluster_graph(label_distr, k, prob): #probability of inter-cluster edges
         W[i] = W[i]/W[i].sum()
     return W
 
-def local_W(label_distr, device):
-    norm_distr = np.zeros(label_distr.shape)
-    n = len(label_distr)
-    for i in range(n): norm_distr[i] = label_distr[i]/np.sum(label_distr[i])
-    W = torch.zeros((n,n)).to(device)
-    majority = np.argmax(label_distr, axis=1)
-    for i in range(n):
-        for j in range(n):
-            cos = np.sum((norm_distr[i]*norm_distr[j]))/(np.linalg.norm(norm_distr[i])*np.linalg.norm(norm_distr[j]))
-            if (cos > 1): cos = 1
-            rd = np.random.rand()
-            if (rd < cos):
-                W[i][j] = 1 #cos
-        W[i] = W[i]/torch.sum(W[i])
-    pdb.set_trace()
-    return W
-
 def self_wt(n, k, w, device):
     W = torch.zeros((n,n)).to(device)
     if (k%2 == 1): k_size = [int((k-1)/2), int((k-1)/2)]
@@ -425,22 +400,6 @@ def k_regular_W(n, k, device):
             W[i][idx] = 1.0/k
     return W
 
-def random_connection(n1, n2, k1, k2, device):
-    
-    W = torch.zeros((n1, n2)).to(device)
-    for i in range(len(W)):
-        num_conn = random.randint(k1, k2)
-        idx = random.sample(range(0, n2), num_conn)
-        W[i][idx] = 1.0/num_conn
-    return W
-
-def simulate_hsl_W(nhubs, nspokes, device):
-
-    W_hs = random_connection(nhubs, nspokes, int(nspokes/nhubs), 2*int(nspokes/nhubs), device)
-    W_h = k_regular_W(nhubs, int(nhubs/2)+1, device)
-    W_sh = random_connection(nspokes, nhubs, 2, nhubs, device)
-    return W_hs, W_h, W_sh
-
 def read_file(filename):
     file = unidecode.unidecode(open(filename).read())
     return file, len(file)
@@ -460,16 +419,6 @@ def compute_cdist(client_wts):
     avg_wts = torch.mean(client_wts, dim=0)
     return torch.mean(torch.norm(client_wts-avg_wts, dim=1)).item()
 
-def distribute_malicious(n_clients, n_mals, distr_type='first_few', n_groups=0, group_ids=0):
-
-    is_mal = np.zeros(n_clients)
-    #n_mals = math.floor(fbyz*n_clients)   
-    if (distr_type == 'random'):
-        mal_idx = np.random.choice(n_clients, n_mals, replace=False)
-        is_mal[mal_idx] = 1
-    elif (distr_type == 'first_few'): is_mal[:n_mals] = 1
-    elif (distr_type == 'group'): is_mal[np.where(group_ids < math.floor(fbyz*n_groups))[0]] = 1
-    return is_mal
 
 def model_to_vec(net):
 
@@ -560,10 +509,6 @@ def create_batch(data_size, batch_size, rr_idx, cl, sample_type='round_robin'):
             rr_idx[cl] = batch_size - (data_size-int(rr_idx[cl]))
         return batch_idx
 
-def cluster_clients(n_clients, n_groups, cluster_type="uniform"):
-
-    if (cluster_type == "uniform"): return np.random.randint(0, n_groups, n_clients)
-
 def num_params(net):
 
     P = 0
@@ -598,25 +543,6 @@ def load_net(net_name, num_inputs, num_outputs, device, seed=None):
     if seed == 0:
         net.load_state_dict(torch.load('outputs/_model.pth'))
     return net
-
-def load_byz(byz_name):
-
-    if byz_name == 'benign':
-        byz = attack.benign
-    elif byz_name == 'full_trim':
-        byz = attack.full_trim
-    elif byz_name == 'full_krum':
-        byz = attack.full_krum
-    elif byz_name == 'adaptive_trim':
-        byz = attack.adaptive_trim
-    elif byz_name == 'adaptive_krum':
-        byz = attack.adaptive_krum
-    elif byz_name == 'shejwalkar':
-        byz = attack.shejwalkar
-    elif byz_name == 'shej_agnostic':
-        byz = attack.shej_agnostic
-
-    return byz
 
 def create_test_img_folder_for_imagenet():
 
@@ -834,23 +760,25 @@ def distribute_data_by_label(device,
     for _, (data, label) in enumerate(train_data):
         sample_ctr = 0
         for (x, y) in zip(data, label):
-            upper_bound = (y.item()) * (1-bias_weight) / (num_outputs-1) + bias_weight
-            lower_bound = (y.item()) * (1-bias_weight) / (num_outputs-1)
-            np.random.seed(batch_size*batch_ctr + sample_ctr)
-            rd = np.random.random_sample()
-            if rd > upper_bound:
-                worker_group = int(np.floor((rd - upper_bound) / other_group_size)+y.item()+1)
-            elif rd < lower_bound:
-                worker_group = int(np.floor(rd / other_group_size))
-            else:
-                worker_group = y.item()
-            
-            # assign a data point to a worker
-            sample_ctr += 1
-            np.random.seed(batch_size*batch_ctr + sample_ctr)
-            rd = np.random.random_sample()
-            selected_worker = int(worker_group*worker_per_group + int(np.floor(rd*worker_per_group)))
             if (bias_weight == 0): selected_worker = np.random.randint(num_workers)
+            else:
+                upper_bound = (y.item()) * (1-bias_weight) / (num_outputs-1) + bias_weight
+                lower_bound = (y.item()) * (1-bias_weight) / (num_outputs-1)
+                np.random.seed(batch_size*batch_ctr + sample_ctr)
+                rd = np.random.random_sample()
+                if rd > upper_bound:
+                    worker_group = int(np.floor((rd - upper_bound) / other_group_size)+y.item()+1)
+                elif rd < lower_bound:
+                    worker_group = int(np.floor(rd / other_group_size))
+                else:
+                    worker_group = y.item()
+                
+                # assign a data point to a worker
+                sample_ctr += 1
+                np.random.seed(batch_size*batch_ctr + sample_ctr)
+                rd = np.random.random_sample()
+                selected_worker = int(worker_group*worker_per_group + int(np.floor(rd*worker_per_group)))
+
             distributed_data[selected_worker].append(x.to(device))
             distributed_label[selected_worker].append(y.to(device))
         batch_ctr += 1

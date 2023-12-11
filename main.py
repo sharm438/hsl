@@ -118,6 +118,11 @@ def main(args):
           for i in range(args.g - 1): W_g = torch.matmul(W_h, W_g)
           W_h = W_g
     
+    attack_flag = 1
+    nodes_attacked = [0]
+
+
+
 
     time_taken = time.time() - start_time
     mins = time_taken // 60
@@ -127,6 +132,7 @@ def main(args):
     start_time = time.time()
     for rnd in range(num_rounds):
         spoke_wts = []
+        this_iter_minibatches = []
         if (args.dataset == 'cifar10'):
             lr = utils.get_lr(rnd, num_rounds, lr_init)
         else: lr = lr_init
@@ -156,6 +162,7 @@ def main(args):
                     minibatch = np.asarray(list(range(int(batch_idx[worker]),distributed_data[worker].shape[0]))) 
                     batch_idx[worker] = batch_size - len(minibatch)
                     minibatch = np.concatenate((minibatch, np.asarray(list(range(int(batch_idx[worker]))))))
+                this_iter_minibatches.append(minibatch)
                 output = net_local(distributed_data[worker][minibatch].to(device))
                 loss = criterion(output, distributed_label[worker][minibatch].to(device))
                 if (not torch.isnan(loss)): #todo - check why loss can become nan
@@ -190,11 +197,11 @@ def main(args):
             r = int(rnd / args.eval_time)
             predist[r], postdist[r] = predist_val, postdist_val
 
-        elif (args.aggregation == 'secure_hsl'):
-            spoke_wts, predist[rnd], postdist[rnd] = aggregation.secure_hsl(device, W_hs, W_h, W_sh, spoke_wts, byz, mal_flag)
-
         if (args.aggregation == 'fedsgd'):
+            if (attack_flag):
+                recon_acc = attack.gradInv(rnd, net_fed, spoke_wts, nodes_attacked, distributed_data, distributed_label, this_iter_minibatches, torch.device('cuda'))
             net_fed = utils.vec_to_model(torch.matmul(wts, spoke_wts), net_name, inp_dim, out_dim, torch.device('cuda'))
+
         else:
             for i in range(num_spokes):
                nets[i] = utils.vec_to_model(spoke_wts[i], net_name, inp_dim, out_dim, torch.device('cuda'))
@@ -234,7 +241,7 @@ def main(args):
                 print('Round: %d, test_acc: %.8f' %(rnd, fed_test_acc[int(rnd/args.eval_time)]))
             else:
                 traced_models = []
-                #Below code is optimized to avoid redundant calculation for spokes under the same hub, and general enough to accommodate p2p int he same block: see smart use of 'var'
+                #Below code is optimized to avoid redundant calculation for spokes under the same hub, and general enough to accommodate p2p in the same block: see smart use of 'var'
                 if (args.aggregation == 'p2p' or args.spoke_budget>1): var = num_spokes
                 #TODO - fix the if else loop to cover all cases
                 elif (args.aggregation == 'hsl' and args.spoke_budget==1): var = num_hubs

@@ -5,6 +5,47 @@ import numpy as np
 import copy
 import pdb
 
+import utils
+import torch.nn.functional as F
+
+def gradInv(rnd, net_fed, spoke_wts, nodes_attacked, distributed_data, distributed_labels, minibatches, device):
+
+  num_attack_iters = 500
+  criterion = torch.nn.CrossEntropyLoss()
+
+  for node in nodes_attacked:
+      minibatch = minibatches[node]
+      data = distributed_data[node][minibatch]
+      labels = distributed_labels[node][minibatch]# .float().requires_grad_(True)
+      true_grad = spoke_wts[node] - utils.model_to_vec(net_fed) 
+      dummy_data = torch.empty((minibatch.shape[0], data.shape[1], data.shape[2], data.shape[3]), device=device).requires_grad_(True)
+
+      optimizer = torch.optim.Adam([dummy_data], lr=1)
+
+
+      for i in range(num_attack_iters):
+          def closure():
+              optimizer.zero_grad()
+              dummy_pred = net_fed(dummy_data)
+              loss = criterion(dummy_pred, labels).requires_grad_(True) 
+              recon_grads = torch.autograd.grad(loss, net_fed.parameters(), create_graph=True)
+              recon_grad_tensor = torch.cat([grad.reshape(-1) for grad in recon_grads])
+              mse_grads = torch.nn.MSELoss()(recon_grad_tensor, true_grad)
+              mse_grads.backward()
+
+              mse_data = torch.norm(dummy_data - data) / len(minibatch)
+              if (i==0 or i%100 == 99):
+                  print(i, loss.item(), mse_grads.item(), mse_data.item())
+              return mse_grads
+
+          optimizer.step(closure)
+      mse_data = torch.norm(dummy_data - data) / len(minibatch)
+      pdb.set_trace()
+
+  return mse_data
+
+
+
 ##No attack
 def benign(device, rnd, attack_prob, past_avg_wts, spoke_wts, mal_idx, dev_type, capabilities, agr, dataset='cifar10'):
 
