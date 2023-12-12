@@ -61,6 +61,8 @@ def main(args):
     local_test_acc = np.zeros((num_time_samples, num_spokes))
     predist = np.zeros(num_time_samples)
     postdist = np.zeros(num_time_samples)
+    recon_real = np.zeros(num_time_samples)
+    recon_est = np.zeros(num_time_samples)
     #Count the number of parameters
     P = 0
     for param in net.parameters():
@@ -187,10 +189,10 @@ def main(args):
         else:
             save_cdist = 0
         if (args.aggregation == 'p2p'):
-            spoke_wts, predist_val, postdist_val = aggregation.p2p(device, rnd, args.dataset, args.g, W, spoke_wts, save_cdist) 
+            spoke_wts, predist_val, postdist_val, recon_acc_real, recon_acc_est = aggregation.p2p(device, rnd, args.dataset, args.g, W, spoke_wts, net_name, inp_dim, out_dim, distributed_data, distributed_label, this_iter_minibatches, save_cdist=save_cdist) 
             r = int(rnd / args.eval_time)
             predist[r], postdist[r] = predist_val, postdist_val
-             
+            recon_real[r], recon_est[r] = recon_acc_real, recon_acc_est 
 
         elif (args.aggregation == 'hsl'):
             spoke_wts, predist_val, postdist_val = aggregation.hsl(device, rnd, args.dataset, args.g, W_hs, W_h, W_sh, spoke_wts, save_cdist)
@@ -287,6 +289,9 @@ def main(args):
                 if (save_cdist):
                     np.save(filename+'_postdist.npy', postdist)
                     np.save(filename+'_predist.npy', predist)
+                    np.save(filename+'_recon_real.npy', recon_real)
+                    np.save(filename+'_recon_est.npy', recon_est)
+                    
                     torch.save(avg_model.state_dict(), filename+'_model.pth')
         save_args = dict(args.__dict__).copy()
         save_args.update(variables)

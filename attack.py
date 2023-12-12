@@ -34,13 +34,12 @@ def gradInv(rnd, net_fed, spoke_wts, nodes_attacked, distributed_data, distribut
               mse_grads.backward()
 
               mse_data = torch.norm(dummy_data - data) / len(minibatch)
-              if (i==0 or i%100 == 99):
-                  print(i, loss.item(), mse_grads.item(), mse_data.item())
+              #if (i==0 or i%100 == 99):
+              #    print(i, loss.item(), mse_grads.item(), mse_data.item())
               return mse_grads
 
           optimizer.step(closure)
       mse_data = torch.norm(dummy_data - data) / len(minibatch)
-      pdb.set_trace()
 
   return mse_data
 
