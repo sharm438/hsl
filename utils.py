@@ -52,6 +52,7 @@ def parse_args():
     parser.add_argument("--exp", help="Experiment name", default='', type=str)
 
     parser.add_argument("--dataset", help="dataset", default='mnist', type=str)
+    parser.add_argument("--batch_size", help="batch size", default=None, type=int)
     parser.add_argument("--bias", help="degree of non-IID to assign data to workers", type=float, default=0.5)
     parser.add_argument("--seed", help="seed for model init", default=108, type=int)
 
@@ -563,14 +564,24 @@ def create_test_img_folder_for_imagenet():
         if os.path.exists(os.path.join(img_dir, img)):
             os.rename(os.path.join(img_dir, img), os.path.join(newpath, img))
 
+def denormalize(tensor, mean, std):
+    return tensor * std + mean
 
-def load_data(dataset_name):
+def plot(data_real, data_recon):
+    data_real = data_real*0.3081 + 0.1307
+    data_recon = data_recon*0.3081 + 0.1307
+    torchvision.utils.save_image(data_real, "real.jpg", nrow=len(data_real))
+    torchvision.utils.save_image(data_recon, "recon.jpg", nrow=len(data_recon))
+    return
+
+def load_data(dataset_name, batch_size):
 
     if (dataset_name == 'mnist'):
         print("Loading MNIST")
         num_inputs, num_outputs= 28 * 28, 10
         net_name = 'dnn'
-        batch_size, lr = 32, 0.01
+        lr = 0.01
+        if (batch_size == None): batch_size = 32
 
         transform = transforms.Compose([
                         transforms.ToTensor(),
@@ -606,7 +617,8 @@ def load_data(dataset_name):
         num_inputs = 28 * 28
         num_outputs = 10
         net_name = 'dnn'
-        batch_size, lr = 32, 0.01
+        lr = 0.01
+        if (batch_size == None): batch_size = 32
 
         transform = transforms.Compose([
                        transforms.ToTensor(),
@@ -642,7 +654,8 @@ def load_data(dataset_name):
         num_inputs = 32*32*3
         num_outputs = 10
         net_name = 'resnet18'
-        batch_size, lr = 128, 0.01
+        lr = 0.01
+        if (batch_size == None): batch_size = 128
 
         transform_train = transforms.Compose([
                               transforms.RandomCrop(32, padding=4),
@@ -683,7 +696,8 @@ def load_data(dataset_name):
 
         #create_test_img_folder_for_imagenet()
         num_inputs, num_outputs = 64*64*3, 200
-        net_name, batch_size, lr = 'resnet-tiny', 256, 0.001
+        net_name, lr = 'resnet-tiny', 0.001
+        if (batch_size == None): batch_size = 256
         transform_train = transforms.Compose([
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),

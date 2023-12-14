@@ -32,7 +32,7 @@ def main(args):
         os.makedirs(outputs_path)
 
     # Load data.
-    trainObject = utils.load_data(args.dataset)
+    trainObject = utils.load_data(args.dataset, args.batch_size)
     train_data = trainObject.train_data 
     test_data = trainObject.test_data
     inp_dim = trainObject.num_inputs
@@ -180,7 +180,7 @@ def main(args):
             del net_local
             torch.cuda.empty_cache()
         ###Do the aggregation
-
+        
         spoke_wts = torch.stack([(torch.cat([xx.reshape((-1)) for xx in x], dim=0)).squeeze(0) for x in spoke_wts])
         avg_wts = torch.mean(spoke_wts, 0)
         avg_model = utils.vec_to_model(avg_wts, net_name, inp_dim, out_dim, device)
@@ -189,7 +189,7 @@ def main(args):
         else:
             save_cdist = 0
         if (args.aggregation == 'p2p'):
-            spoke_wts, predist_val, postdist_val, recon_acc_real, recon_acc_est = aggregation.p2p(device, rnd, args.dataset, args.g, W, spoke_wts, net_name, inp_dim, out_dim, distributed_data, distributed_label, this_iter_minibatches, save_cdist=save_cdist) 
+            spoke_wts, predist_val, postdist_val, recon_acc_real, recon_acc_est = aggregation.p2p(device, rnd, args.g, W, spoke_wts, net_name, inp_dim, out_dim, distributed_data, distributed_label, this_iter_minibatches, save_cdist=save_cdist) 
             r = int(rnd / args.eval_time)
             predist[r], postdist[r] = predist_val, postdist_val
             recon_real[r], recon_est[r] = recon_acc_real, recon_acc_est 
@@ -201,7 +201,7 @@ def main(args):
 
         if (args.aggregation == 'fedsgd'):
             if (attack_flag):
-                recon_acc = attack.gradInv(rnd, net_fed, spoke_wts, nodes_attacked, distributed_data, distributed_label, this_iter_minibatches, torch.device('cuda'))
+                recon_acc = attack.gradInv(rnd, args.dataset, net_fed, spoke_wts, nodes_attacked, distributed_data, distributed_label, this_iter_minibatches, torch.device('cuda'))
             net_fed = utils.vec_to_model(torch.matmul(wts, spoke_wts), net_name, inp_dim, out_dim, torch.device('cuda'))
 
         else:

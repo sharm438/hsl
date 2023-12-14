@@ -1,47 +1,54 @@
+import numpy as np
 import torch
 from copy import deepcopy
 import math
-import numpy as np
 import copy
 import pdb
 
 import utils
 import torch.nn.functional as F
 
-def gradInv(rnd, net_fed, spoke_wts, nodes_attacked, distributed_data, distributed_labels, minibatches, device):
 
-  num_attack_iters = 500
+def gradInv(rnd, dataset_name, net_fed, spoke_wts, nodes_attacked, distributed_data, distributed_labels, minibatches, device):
+  
+  num_attack_iters = 24000
   criterion = torch.nn.CrossEntropyLoss()
 
   for node in nodes_attacked:
-      minibatch = minibatches[node]
-      data = distributed_data[node][minibatch]
-      labels = distributed_labels[node][minibatch]# .float().requires_grad_(True)
-      true_grad = spoke_wts[node] - utils.model_to_vec(net_fed) 
-      dummy_data = torch.empty((minibatch.shape[0], data.shape[1], data.shape[2], data.shape[3]), device=device).requires_grad_(True)
+    minibatch = minibatches[node]
+    data = distributed_data[node][minibatch]
+    labels = distributed_labels[node][minibatch]# .float().requires_grad_(True)
+    true_grad = spoke_wts[node] - utils.model_to_vec(net_fed) 
+    dummy_data = torch.empty((minibatch.shape[0], data.shape[1], data.shape[2], data.shape[3]), device=device).requires_grad_(True)
 
-      optimizer = torch.optim.Adam([dummy_data], lr=1)
+    optimizer = torch.optim.Adam([dummy_data], lr=0.1)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[num_attack_iters // 2.667,
+                                                     num_attack_iters // 1.6, num_attack_iters // 1.142], gamma=0.1)
 
+    for i in range(num_attack_iters):
+      def closure():
+        optimizer.zero_grad()
+        dummy_pred = net_fed(dummy_data)
+        loss_model = criterion(dummy_pred, labels)#.requires_grad_(True) 
+        recon_grads = torch.autograd.grad(loss_model, net_fed.parameters(), create_graph=True)
+        recon_grad_tensor = torch.cat([grad.reshape(-1) for grad in recon_grads])
+     
+        loss_recon = 1 - torch.nn.functional.cosine_similarity(recon_grad_tensor, true_grad, 0, 1e-10)
+        loss_recon += 0 #total variation
+        loss_recon.backward()
+    
+        mse_recon = torch.norm(dummy_data - data) / len(minibatch)
+        if (i%200 == 199):
+          print(i, loss_model.item(), loss_recon.item(), mse_recon.item())
+        return loss_recon
 
-      for i in range(num_attack_iters):
-          def closure():
-              optimizer.zero_grad()
-              dummy_pred = net_fed(dummy_data)
-              loss = criterion(dummy_pred, labels).requires_grad_(True) 
-              recon_grads = torch.autograd.grad(loss, net_fed.parameters(), create_graph=True)
-              recon_grad_tensor = torch.cat([grad.reshape(-1) for grad in recon_grads])
-              mse_grads = torch.nn.MSELoss()(recon_grad_tensor, true_grad)
-              mse_grads.backward()
-
-              mse_data = torch.norm(dummy_data - data) / len(minibatch)
-              #if (i==0 or i%100 == 99):
-              #    print(i, loss.item(), mse_grads.item(), mse_data.item())
-              return mse_grads
-
-          optimizer.step(closure)
-      mse_data = torch.norm(dummy_data - data) / len(minibatch)
-
-  return mse_data
+      optimizer.step(closure)
+      scheduler.step()
+    mse_recon = torch.norm(dummy_data - data) / len(minibatch)
+    print("Round %d, recon_mse = %f" %(rnd, mse_recon))
+    utils.plot(data, dummy_data)
+    pdb.set_trace()
+  return mse_recon
 
 
 
