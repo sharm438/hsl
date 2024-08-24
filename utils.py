@@ -59,9 +59,9 @@ def parse_args():
     parser.add_argument("--save_time", help="array saving frequency", default=100, type=int)
     parser.add_argument("--eval_time", help="evaluation frequency", default=10, type=int)
 
-    parser.add_argument("--num_edges", help="Out of the lower triangle", default=1, type=float)
+    parser.add_argument("--num_edges", help="Out of the lower triangle", default=64, type=float)
     parser.add_argument("--W", help="Whether to load a saved W", default=None, type=str)
-    parser.add_argument("--W_type", help="k-regular, erdos-renyi, franke-wolfe", default='k-regular', type=str)
+    parser.add_argument("--W_type", help="random_graph, erdos-renyi, franke-wolfe", default='random_graph', type=str)
     parser.add_argument("--max_degree", help="maximum degree of a node", default='10', type=int)
     parser.add_argument("--map_type", help="greedy or foolish", default='greedy', type=str)
 
