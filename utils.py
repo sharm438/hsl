@@ -168,7 +168,7 @@ def compute_kl_div(p, q):
     kl_div = np.sum(p * np.log(p/q))
     return kl_div
 # TODO - incorrect code, works right for k=2, but see what k=3 does, makes a node make 4 neighbors
-def connect_hubs(num_hubs, k):
+def connect_hubs(num_hubs, k=2):
     ## hardcoded to connect in a ring
     W = torch.zeros((num_hubs, num_hubs))
     for i in range(num_hubs):
