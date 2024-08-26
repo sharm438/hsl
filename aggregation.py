@@ -19,7 +19,7 @@ def hsl(device, rnd, g, W_hs, W_h, W_sh, spoke_wts, save_cdist=0):
 
     if (save_cdist):
         post_cdist = torch.sum((spoke_wts-torch.mean(spoke_wts, dim=0))**2)/len(spoke_wts)
-        print(pre_cdist, post_cdist)
+        #print(pre_cdist, post_cdist)
     
     return spoke_wts, pre_cdist, post_cdist
 

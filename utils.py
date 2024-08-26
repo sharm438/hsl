@@ -146,7 +146,7 @@ def greedy_hubs(num_hubs, num_spokes, num_spoke_connections, label_distr, map_ty
         hub_label_distr_norm = hub_label_distr / hub_label_distr.sum()
         kl_divs.append(compute_kl_div(global_label_distr_norm, hub_label_distr_norm))
         W_hs[hub] /= W_hs[hub].sum()
-    print(kl_divs, np.mean(kl_divs))
+    #print(kl_divs, np.mean(kl_divs))
     for spoke in range(num_spokes): 
         num_connections = len(np.where(W_sh[spoke])[0])
         if (num_connections != num_spoke_connections):
