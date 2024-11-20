@@ -23,6 +23,8 @@ import os
 
 import networkx as nx
 
+from torch.utils.data import random_split
+
 @attrs.define(frozen=False)
 class TrainObject:
     dataset_name: str
@@ -42,6 +44,9 @@ class DistributedData:
 
 def parse_args():
     parser = argparse.ArgumentParser()
+
+    parser.add_argument("--fraction", help="fraction of dataset to be used", default=1.0, type=float)
+
     parser.add_argument("--aggregation", help="aggregation rule", default='p2p', type=str)
     parser.add_argument("--num_spokes", help="# clients", default=20, type=int)
     parser.add_argument("--num_hubs", help="# servers", default=1, type=int)
@@ -80,6 +85,15 @@ def parse_args():
     parser.add_argument("--g", help="number of gossip steps", default=1, type=int)
     return parser.parse_args()
 
+def el_oracle(num_spokes, s):
+    W = torch.zeros((num_spokes, num_spokes))
+    #TODO
+    return W
+
+def el_local(num_spokes, s):
+    W = torch.zeros((num_spokes, num_spokes))
+    #TODO
+    return W
 
 def get_lr(rnd, nrounds, lr):
 
@@ -92,23 +106,23 @@ def get_lr(rnd, nrounds, lr):
     else:
         return max_lr*np.exp(-0.0125*(((rnd-mu)/sigma)**2))
 
-def label_distr(labels, nlabels):
+def compute_label_distribution(labels, nlabels):
 
     nnodes = len(labels)
-    distr = np.zeros((nnodes, nlabels))
+    distribution = np.zeros((nnodes, nlabels))
     for i in range(nnodes):
         for j in labels[i]:
-            distr[i][j.item()] += 1
+            distribution[i][j.item()] += 1
 
-    return distr
+    return distribution
 
 
-def greedy_hubs(num_hubs, num_spokes, num_spoke_connections, label_distr, map_type):
+def greedy_hubs(num_hubs, num_spokes, num_spoke_connections, label_distribution, map_type):
     ## proposed algorithm to mimic global distribution locally
     W_hs = torch.zeros((num_hubs, num_spokes))
     W_sh = torch.zeros((num_spokes, num_hubs))
     num_hub_connections = int(num_spokes * num_spoke_connections / num_hubs)
-    global_label_distr_norm = label_distr.sum(0) / label_distr.sum()
+    global_label_distr_norm = label_distribution.sum(0) / label_distribution.sum()
     for i in range(num_hub_connections+1):
         random_hub_sequence = random.sample(range(num_hubs), num_hubs)
         for hub in random_hub_sequence:
@@ -116,13 +130,13 @@ def greedy_hubs(num_hubs, num_spokes, num_spoke_connections, label_distr, map_ty
             my_spokes = np.where(W_hs[hub])[0]
             duplicate_spokes = np.isin(available_spokes, my_spokes)
             available_spokes = available_spokes[~duplicate_spokes]
-            hub_label_distr = label_distr[np.where(W_hs[hub])[0]].sum(0)
+            hub_label_distr = label_distribution[np.where(W_hs[hub])[0]].sum(0)
             ## TODO - undo changes
             if map_type == 'greedy': min_kl_div = np.inf
             elif map_type == 'foolish': min_kl_div = -np.inf
             closest_spoke = -1
             for spoke in available_spokes:
-                updated_hub_label_distr = hub_label_distr + label_distr[spoke]
+                updated_hub_label_distr = hub_label_distr + label_distribution[spoke]
                 updated_hub_label_distr_norm = updated_hub_label_distr / updated_hub_label_distr.sum()
                 kl_div = compute_kl_div(global_label_distr_norm, updated_hub_label_distr_norm) 
                 ## Undo changes
@@ -138,11 +152,11 @@ def greedy_hubs(num_hubs, num_spokes, num_spoke_connections, label_distr, map_ty
                 #print("Hub %d chose spoke %d" %(hub, closest_spoke))
                 W_hs[hub][closest_spoke] = 1
                 W_sh[closest_spoke][hub] = 1
-                hub_label_distr += label_distr[closest_spoke]
+                hub_label_distr += label_distribution[closest_spoke]
 
     kl_divs = []
     for hub in range(num_hubs): 
-        hub_label_distr = label_distr[np.where(W_hs[hub])[0]].sum(0)
+        hub_label_distr = label_distribution[np.where(W_hs[hub])[0]].sum(0)
         hub_label_distr_norm = hub_label_distr / hub_label_distr.sum()
         kl_divs.append(compute_kl_div(global_label_distr_norm, hub_label_distr_norm))
         W_hs[hub] /= W_hs[hub].sum()
@@ -436,16 +450,16 @@ def vec_to_model(vec, net_name, num_inp, num_out, device):
                 idx += param[1].nelement()
     return net
 
-def create_model(net, net_name, num_inp, num_outp, seed=None):
+def copy_model(net, net_name, num_inp, num_outp, seed=None):
 
-    created_net = load_net(net_name, num_inp, num_outp, torch.device('cuda'), seed)
+    copied_net = load_net(net_name, num_inp, num_outp, torch.device('cuda'), seed)
     with torch.no_grad():
         idx = 0
-        for param1, param2 in zip(created_net.parameters(), net.parameters()):
+        for param1, param2 in zip(copied_net.parameters(), net.parameters()):
             if param1[1].requires_grad:
                 param1[1].data = param2[1].data.clone().detach()
 
-    return created_net
+    return copied_net
 
 def update_model(message, net, aggregated_grads, test_data, device):
 
@@ -574,7 +588,7 @@ def plot(data_real, data_recon):
     torchvision.utils.save_image(data_recon, "recon.jpg", nrow=len(data_recon))
     return
 
-def load_data(dataset_name, batch_size):
+def load_data(dataset_name, batch_size, fraction=1.0):
 
     if (dataset_name == 'mnist'):
         print("Loading MNIST")
@@ -593,6 +607,10 @@ def load_data(dataset_name, batch_size):
                        download='True', 
                        transform=transform
                     )
+        if (fraction < 1):
+            sample_size = int(len(trainset) * fraction)
+            trainset, remaining_set = random_split(trainset, [sample_size, len(trainset)-sample_size]) 
+
         train_data = torch.utils.data.DataLoader(
                          trainset,
                          batch_size=batch_size,
@@ -630,6 +648,11 @@ def load_data(dataset_name, batch_size):
                        download='True',
                        transform=transform
                    )
+        
+        if (fraction < 1):
+            sample_size = int(len(trainset) * fraction)
+            trainset, remaining_set = random_split(trainset, [sample_size, len(trainset)-sample_size]) 
+
         train_data = torch.utils.data.DataLoader(
                         trainset,
                         batch_size=batch_size,
@@ -673,6 +696,11 @@ def load_data(dataset_name, batch_size):
                        download='True',
                        transform=transform_train
                    )
+        
+        if (fraction < 1):
+            sample_size = int(len(trainset) * fraction)
+            trainset, remaining_set = random_split(trainset, [sample_size, len(trainset)-sample_size]) 
+
         train_data = torch.utils.data.DataLoader(
                          trainset,
                          batch_size=batch_size,
@@ -711,6 +739,11 @@ def load_data(dataset_name, batch_size):
                 root='./data/tiny-imagenet-200/train/',
                 transform=transform_train
                 )
+        
+        if (fraction < 1):
+            sample_size = int(len(trainset) * fraction)
+            trainset, remaining_set = random_split(trainset, [sample_size, len(trainset)-sample_size]) 
+            
         train_data = torch.utils.data.DataLoader(
                          trainset,
                          batch_size=batch_size,

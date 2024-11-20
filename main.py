@@ -24,6 +24,7 @@ def main(args):
     num_spokes, num_hubs = args.num_spokes, args.num_hubs
     num_rounds, num_local_iters = args.num_rounds, args.num_local_iters
 
+    # Set device (gpu or cpu) and path for saving output files
     if args.gpu == -1:  device = torch.device('cpu')
     else:  device = torch.device('cuda')
     filename = 'outputs/'+args.exp
@@ -32,7 +33,7 @@ def main(args):
         os.makedirs(outputs_path)
 
     # Load data.
-    trainObject = utils.load_data(args.dataset, args.batch_size)
+    trainObject = utils.load_data(args.dataset, args.batch_size, args.fraction)
     train_data = trainObject.train_data 
     test_data = trainObject.test_data
     inp_dim = trainObject.num_inputs
@@ -47,12 +48,12 @@ def main(args):
     distributed_label = distributedData.distributed_output
     wts = distributedData.wts
     #wts = torch.ones(num_spokes).to(device) / num_spokes
-    label_distr = utils.label_distr(distributed_label, out_dim)
+    label_distribution = utils.compute_label_distribution(distributed_label, out_dim)
 
     # Load models.
     net = utils.load_net(net_name, inp_dim, out_dim, device, seed=args.seed) 
     nets = {}
-    for i in range(num_spokes): nets[i] = utils.create_model(net, net_name, inp_dim, out_dim, seed=args.seed)
+    for i in range(num_spokes): nets[i] = utils.copy_model(net, net_name, inp_dim, out_dim, seed=args.seed)
 
     criterion = nn.CrossEntropyLoss()
 
@@ -73,14 +74,18 @@ def main(args):
         fed_test_acc = np.zeros(num_time_samples)
         fed_test_acc_top5 = np.zeros(num_time_samples)
         fed_train_loss = np.zeros((num_rounds, num_spokes))
-        net_fed = utils.create_model(net, net_name, inp_dim, out_dim, seed=args.seed)
+        net_fed = utils.copy_model(net, net_name, inp_dim, out_dim, seed=args.seed)
 
     batch_idx = np.zeros(num_spokes)
    
     if (args.aggregation == 'p2p'):
       if (args.W == None):
-          if (args.W_type == 'franke_wolfe'):
-            W, num_connections, num_directed_edges = utils.franke_wolfe_p2p_graph(label_distr, 0.1, args.max_degree)
+          if (args.W_type == 'EL_Oracle'):
+              W = utils.el_oracle(num_spokes, args.k) 
+          elif (args.W_type == 'EL_Local'):
+              W = utils.el_local(num_spokes, args.k)
+          elif (args.W_type == 'franke_wolfe'):
+            W, num_connections, num_directed_edges = utils.franke_wolfe_p2p_graph(label_distribution, 0.1, args.max_degree)
             variables['num_connections'] = str(num_connections)
             variables['num_directed_edges'] = str(num_directed_edges)
             print("Franke-Wolfe generated %f directional edges" %num_directed_edges)
@@ -101,7 +106,7 @@ def main(args):
     elif (args.aggregation == 'hsl'):
       if (args.W_hs == None):
           #W_hs, W_sh = utils.random_graph(num_hubs, num_spokes, args.num_edges_hs, args.agr)
-          W_hs, W_sh, hub_to_spokes, spoke_to_hubs = utils.greedy_hubs(num_hubs, num_spokes, num_spoke_connections=args.spoke_budget, label_distr=label_distr, map_type=args.map_type)
+          W_hs, W_sh, hub_to_spokes, spoke_to_hubs = utils.greedy_hubs(num_hubs, num_spokes, num_spoke_connections=args.spoke_budget, label_distribution=label_distribution, map_type=args.map_type)
           num_spoke_connections = args.spoke_budget
           W_hs, W_sh = W_hs.to(device), W_sh.to(device)
           torch.save(W_hs, filename+'_W_hs.pt')
@@ -120,8 +125,8 @@ def main(args):
           for i in range(args.g - 1): W_g = torch.matmul(W_h, W_g)
           W_h = W_g
     
-    attack_flag = 0
-    nodes_attacked = [0]
+    #attack_flag = 0
+    #nodes_attacked = [0]
 
 
 
