@@ -1,7 +1,3 @@
-Below is an updated `README.md` with the requested changes and examples.
-
----
-
 # README
 
 ## Overview
@@ -142,5 +138,3 @@ Explanation:
 - For subtle experiments, `eval_time` can be increased or decreased to manage overhead.
 
 ---
-
-This `README.md` now includes details on the newly introduced `bidirectional` and `self_weights` flags for HSL and provides example runs for all three aggregation methods.
