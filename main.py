@@ -1,308 +1,203 @@
 import argparse
 import torch
+import torch.multiprocessing as mp
 import os
-import torch.nn as nn
-import torch.nn.functional as F
-import torchvision
-import torchvision.transforms as transforms
-import torchvision.models as models
-import numpy as np
-import sys
-import pdb
-from copy import deepcopy
-import aggregation
-import attack
-import utils
 import time
-
 import json
-           
+from copy import deepcopy
+import utils
+import aggregation
+import train_node
+import models
+
+if __name__ == "__main__":
+    mp.set_start_method("spawn", force=True)
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--exp", type=str, default='experiment')
+    parser.add_argument("--dataset", type=str, default='mnist', choices=['mnist', 'cifar10'])
+    parser.add_argument("--fraction", type=float, default=1.0)
+    parser.add_argument("--bias", type=float, default=0.0)
+    parser.add_argument("--aggregation", type=str, default='fedsgd', choices=['fedsgd', 'p2p', 'hsl'])
+    parser.add_argument("--num_spokes", type=int, default=10)
+    parser.add_argument("--num_hubs", type=int, default=1)
+    parser.add_argument("--num_rounds", type=int, default=100)
+    parser.add_argument("--num_local_iters", type=int, default=1)
+    parser.add_argument("--batch_size", type=int, default=None)
+    parser.add_argument("--eval_time", type=int, default=10)
+    parser.add_argument("--gpu", type=int, default=0)
+    parser.add_argument("--k", type=int, default=2)
+    parser.add_argument("--spoke_budget", type=int, default=1)
+    parser.add_argument("--lr", type=float, default=0.01)
+    parser.add_argument("--sample_type", type=str, default="round_robin", choices=["round_robin","random"])
+    parser.add_argument("--bidirectional", type=int, default=0, help="1 means spokes choose same hubs second time")
+    parser.add_argument("--self_weights", type=int, default=0, help="1 means spokes include self weight in final aggregation")
+
+    return parser.parse_args()
+
 def main(args):
-
-    start_time = time.time()
-    variables = {}
-    num_spokes, num_hubs = args.num_spokes, args.num_hubs
-    num_rounds, num_local_iters = args.num_rounds, args.num_local_iters
-
-    # Set device (gpu or cpu) and path for saving output files
-    if args.gpu == -1:  device = torch.device('cpu')
-    else:  device = torch.device('cuda')
-    filename = 'outputs/'+args.exp
+    aggregator_device = torch.device('cuda:'+str(args.gpu) if args.gpu>=0 and torch.cuda.is_available() else 'cpu')
     outputs_path = os.path.join(os.getcwd(), "outputs")
     if not os.path.isdir(outputs_path):
         os.makedirs(outputs_path)
+    filename = os.path.join(outputs_path, args.exp)
 
-    # Load data.
     trainObject = utils.load_data(args.dataset, args.batch_size, args.fraction)
-    train_data = trainObject.train_data 
+    data, labels = trainObject.train_data, trainObject.train_labels
     test_data = trainObject.test_data
     inp_dim = trainObject.num_inputs
-    out_dim = trainObject.num_outputs 
+    out_dim = trainObject.num_outputs
+    lr = args.lr
+    batch_size = trainObject.batch_size
     net_name = trainObject.net_name
-    lr_init = trainObject.lr
-    batch_size = trainObject.batch_size 
 
-    # Distribute data.
-    distributedData = utils.distribute_data_by_label(device, batch_size, args.bias, train_data, num_spokes, inp_dim, out_dim, net_name)
+    distributedData = utils.distribute_data_noniid((data, labels), args.num_spokes, args.bias, inp_dim, out_dim, net_name, aggregator_device)
     distributed_data = distributedData.distributed_input
     distributed_label = distributedData.distributed_output
-    wts = distributedData.wts
-    #wts = torch.ones(num_spokes).to(device) / num_spokes
-    label_distribution = utils.compute_label_distribution(distributed_label, out_dim)
+    node_weights = distributedData.wts
 
-    # Load models.
-    net = utils.load_net(net_name, inp_dim, out_dim, device, seed=args.seed) 
-    nets = {}
-    for i in range(num_spokes): nets[i] = utils.copy_model(net, net_name, inp_dim, out_dim, seed=args.seed)
+    # Global model on aggregator_device
+    global_model = models.load_net(net_name, inp_dim, out_dim, aggregator_device)
 
-    criterion = nn.CrossEntropyLoss()
+    manager = mp.Manager()
+    rr_indices = manager.dict()
+    for node_id in range(args.num_spokes):
+        ds_size = distributed_data[node_id].shape[0]
+        if ds_size > 0:
+            distributed_data[node_id] = distributed_data[node_id].cpu()
+            distributed_label[node_id] = distributed_label[node_id].cpu()
+            perm = torch.randperm(ds_size)
+            distributed_data[node_id] = distributed_data[node_id][perm]
+            distributed_label[node_id] = distributed_label[node_id][perm]
+        rr_indices[node_id] = 0
 
-    num_time_samples = int(num_rounds / args.eval_time)
-    test_acc = np.empty(num_time_samples)
-    local_test_acc = np.zeros((num_time_samples, num_spokes))
-    predist = np.zeros(num_time_samples)
-    postdist = np.zeros(num_time_samples)
-    recon_real = np.zeros(num_time_samples)
-    recon_est = np.zeros(num_time_samples)
-    #Count the number of parameters
-    P = 0
-    for param in net.parameters():
-        if param.requires_grad:
-            P = P + param.nelement()
+    metrics = {
+        'round': [],
+        'global_acc': [],
+        'global_loss': [],
+        'local_acc': [],
+        'local_loss': [],
+        'spoke_acc': []
+    }
 
-    if (args.aggregation == 'fedsgd'): 
-        fed_test_acc = np.zeros(num_time_samples)
-        fed_test_acc_top5 = np.zeros(num_time_samples)
-        fed_train_loss = np.zeros((num_rounds, num_spokes))
-        net_fed = utils.copy_model(net, net_name, inp_dim, out_dim, seed=args.seed)
+    return_dict = manager.dict()
 
-    batch_idx = np.zeros(num_spokes)
-   
-    if (args.aggregation == 'p2p'):
-      if (args.W == None):
-          if (args.W_type == 'EL_Oracle'):
-              W = utils.el_oracle(num_spokes, args.k) 
-          elif (args.W_type == 'EL_Local'):
-              W = utils.el_local(num_spokes, args.k)
-          elif (args.W_type == 'franke_wolfe'):
-            W, num_connections, num_directed_edges = utils.franke_wolfe_p2p_graph(label_distribution, 0.1, args.max_degree)
-            variables['num_connections'] = str(num_connections)
-            variables['num_directed_edges'] = str(num_directed_edges)
-            print("Franke-Wolfe generated %f directional edges" %num_directed_edges)
-          elif (args.W_type == 'erdos_renyi'):
-            W = utils.erdos_renyi(num_spokes, args.num_edges, args.seed)
-          elif (args.W_type == 'random_graph'):
-            W = utils.random_graph(num_spokes, num_spokes, args.num_edges, args.agr) #choices: mean, random_static, adjacency_static
-            #W = utils.fully_connect(num_spokes)
-          elif (args.W_type == 'self_wt'):
-            W = utils.self_wt(num_spokes, num_spokes, args.self_wt, device)
-          elif (args.W_type == 'ring'):
-            W = utils.connect_hubs(num_spokes)
-          W = W.to(device)
-          torch.save(W, filename+'_W.pt')
-      else: 
-          W = torch.load(args.W).to(device)
+    for rnd in range(args.num_rounds):
+        global_wts = utils.model_to_vec(global_model).cpu()
+        node_return = manager.dict()
+        processes = []
 
-    elif (args.aggregation == 'hsl'):
-      if (args.W_hs == None):
-          #W_hs, W_sh = utils.random_graph(num_hubs, num_spokes, args.num_edges_hs, args.agr)
-          W_hs, W_sh, hub_to_spokes, spoke_to_hubs = utils.greedy_hubs(num_hubs, num_spokes, num_spoke_connections=args.spoke_budget, label_distribution=label_distribution, map_type=args.map_type)
-          num_spoke_connections = args.spoke_budget
-          W_hs, W_sh = W_hs.to(device), W_sh.to(device)
-          torch.save(W_hs, filename+'_W_hs.pt')
-          torch.save(W_sh, filename+'_W_sh.pt')
-      else: 
-          W_hs = torch.load(args.W_hs).to(device)
-          W_sh = torch.load(args.W_sh).to(device)
-      if (args.W_h == None):
-          W_h = utils.connect_hubs(num_hubs, args.k)
-          W_h = W_h.to(device)
-          torch.save(W_h, filename+'_W_h.pt')
-      else: 
-          W_h = torch.load(args.W_h).to(device)
-      if (args.g > 1 and args.nbyz == 0):
-          W_g = W_h.clone()
-          for i in range(args.g - 1): W_g = torch.matmul(W_h, W_g)
-          W_h = W_g
-    
-    #attack_flag = 0
-    #nodes_attacked = [0]
+        # Run local training on CPU
+        for node_id in range(args.num_spokes):
+            p = mp.Process(target=train_node.local_train_worker,
+                           args=(node_id, global_wts, distributed_data[node_id], distributed_label[node_id],
+                                 inp_dim, out_dim, net_name, args.num_local_iters, batch_size, lr, 'cpu',
+                                 args.sample_type, rr_indices, node_return))
+            p.start()
+            processes.append(p)
+        for p in processes:
+            p.join()
 
+        if args.aggregation == 'fedsgd':
+            local_models = [node_return[i] for i in range(args.num_spokes)]
+            aggregated_wts = aggregation.federated_aggregation(local_models, node_weights)
+            global_model = utils.vec_to_model(aggregated_wts.to(aggregator_device), net_name, inp_dim, out_dim, aggregator_device)
 
+            if (rnd+1) % args.eval_time == 0:
+                traced_model = torch.jit.trace(deepcopy(global_model),
+                                               torch.randn([batch_size]+utils.get_input_shape(args.dataset)).to(aggregator_device))
+                loss, acc = utils.evaluate_global_metrics(traced_model, test_data, aggregator_device)
+                metrics['round'].append(rnd+1)
+                metrics['global_loss'].append(loss)
+                metrics['global_acc'].append(acc)
+                print(f"Round {rnd+1}, Global Acc: {acc:.4f}, Global Loss: {loss:.4f}")
 
+        elif args.aggregation == 'p2p':
+            W = utils.create_k_random_regular_graph(args.num_spokes, args.k, aggregator_device)
+            spoke_wts = torch.stack([node_return[i] for i in range(args.num_spokes)])  # on CPU
+            spoke_wts = spoke_wts.to(aggregator_device)  # move to aggregator_device
+            spoke_wts = aggregation.p2p_aggregation(spoke_wts, W)
+            global_model = utils.vec_to_model(spoke_wts[0], net_name, inp_dim, out_dim, aggregator_device)
 
-    time_taken = time.time() - start_time
-    mins = time_taken // 60
-    secs = time_taken - mins*60
-    print("Simulation setup in %d min %d sec." %(mins, secs))
-    max_accuracy = -1
-    start_time = time.time()
-    for rnd in range(num_rounds):
-        spoke_wts = []
-        this_iter_minibatches = []
-        if (args.dataset == 'cifar10'):
-            lr = utils.get_lr(rnd, num_rounds, lr_init)
-        else: lr = lr_init
-        #lr = lr_init
-        for worker in range(num_spokes):
-            if (args.aggregation == 'fedsgd'):
-                net_local = deepcopy(net_fed)
-            else: 
-                net_local = deepcopy(nets[worker]) 
-            net_local.train()
-            if (args.dataset == 'imagenet'):
-                optimizer = torch.optim.Adam(net_local.parameters())
-            elif (args.dataset == 'cifar10'):
-                optimizer = torch.optim.SGD(net_local.parameters(), lr=lr) #, momentum=0.9, weight_decay=5e-4)
-                #scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=15)
-            else: 
-                optimizer = torch.optim.SGD(net_local.parameters(), lr=lr)
-            
-            #sample local dataset in a round-robin manner
-            avg_loss = 0
-            for local_iter in range(num_local_iters):
-                optimizer.zero_grad()
-                if (batch_idx[worker]+batch_size < distributed_data[worker].shape[0]):
-                    minibatch = np.asarray(list(range(int(batch_idx[worker]),int(batch_idx[worker])+batch_size)))
-                    batch_idx[worker] = batch_idx[worker] + batch_size
-                else: 
-                    minibatch = np.asarray(list(range(int(batch_idx[worker]),distributed_data[worker].shape[0]))) 
-                    batch_idx[worker] = batch_size - len(minibatch)
-                    minibatch = np.concatenate((minibatch, np.asarray(list(range(int(batch_idx[worker]))))))
-                this_iter_minibatches.append(minibatch)
-                output = net_local(distributed_data[worker][minibatch].to(device))
-                loss = criterion(output, distributed_label[worker][minibatch].to(device))
-                if (not torch.isnan(loss)): #todo - check why loss can become nan
-                    loss.backward()
-                    optimizer.step()
-                avg_loss += loss.item()
-            avg_loss /= num_local_iters
-            if (args.aggregation == 'fedsgd'):
-                fed_train_loss[rnd][worker] = avg_loss
+            if (rnd+1)%args.eval_time==0:
+                local_accs, local_losses = [], []
+                for node_id in range(args.num_spokes):
+                    node_model = utils.vec_to_model(spoke_wts[node_id], net_name, inp_dim, out_dim, aggregator_device)
+                    traced_model = torch.jit.trace(deepcopy(node_model),
+                                                   torch.randn([batch_size]+utils.get_input_shape(args.dataset)).to(aggregator_device))
+                    loss, acc = utils.evaluate_global_metrics(traced_model, test_data, aggregator_device)
+                    local_accs.append(acc)
+                    local_losses.append(loss)
+                metrics['round'].append(rnd+1)
+                metrics['local_acc'].append(local_accs)
+                metrics['local_loss'].append(local_losses)
+                print(f"Round {rnd+1}, Local Acc range: [{min(local_accs):.4f}, {max(local_accs):.4f}]")
 
-            ##append all gradients in a list
-            spoke_wts.append([x.detach() for x in net_local.parameters() if x.requires_grad != 'null'])
-            del net_local
-            torch.cuda.empty_cache()
-        ###Do the aggregation
-        
-        spoke_wts = torch.stack([(torch.cat([xx.reshape((-1)) for xx in x], dim=0)).squeeze(0) for x in spoke_wts])
-        avg_wts = torch.mean(spoke_wts, 0)
-        avg_model = utils.vec_to_model(avg_wts, net_name, inp_dim, out_dim, device)
-        if (rnd % args.eval_time == args.eval_time - 1) and (rnd > 0):
-            save_cdist = args.save_cdist
-        else:
-            save_cdist = 0
-        if (args.aggregation == 'p2p'):
-            spoke_wts, predist_val, postdist_val = aggregation.p2p(device, rnd, args.g, W, spoke_wts, net_name, inp_dim, out_dim, distributed_data, distributed_label, this_iter_minibatches, save_cdist=save_cdist) 
-            r = int(rnd / args.eval_time)
-            predist[r], postdist[r] = predist_val, postdist_val
-            #recon_real[r], recon_est[r] = recon_acc_real, recon_acc_est 
+        elif args.aggregation == 'hsl':
+            # Step 1: W_hs & initial_hub_choices
+            W_h, W_hs, initial_spoke_hub_choices = utils.generate_hsl_matrices_initial(args.num_hubs, args.num_spokes, args.k, args.spoke_budget, aggregator_device)
 
-        elif (args.aggregation == 'hsl'):
-            spoke_wts, predist_val, postdist_val = aggregation.hsl(device, rnd, args.g, W_hs, W_h, W_sh, spoke_wts, save_cdist)
-            r = int(rnd / args.eval_time)
-            predist[r], postdist[r] = predist_val, postdist_val
+            spoke_wts = torch.stack([node_return[i] for i in range(args.num_spokes)]) # CPU
+            spoke_wts = spoke_wts.to(aggregator_device)
 
-        if (args.aggregation == 'fedsgd'):
-            #if (attack_flag):
-            #    recon_acc = attack.gradInv(rnd, args.dataset, net_fed, spoke_wts, nodes_attacked, distributed_data, distributed_label, this_iter_minibatches, torch.device('cuda'))
-            net_fed = utils.vec_to_model(torch.matmul(wts, spoke_wts), net_name, inp_dim, out_dim, torch.device('cuda'))
+            # Hub aggregation:
+            # hubs first aggregate from spokes: hub_wts = W_hs * spoke_wts
+            # hubs aggregate among themselves: hub_wts = W_h * hub_wts
+            hub_wts = torch.mm(W_hs, spoke_wts)
+            hub_wts = torch.mm(W_h, hub_wts)
 
-        else:
-            for i in range(num_spokes):
-               nets[i] = utils.vec_to_model(spoke_wts[i], net_name, inp_dim, out_dim, torch.device('cuda'))
+            b_s = args.spoke_budget
 
-        ##Evaluate the learned model on test dataset
-        if(args.dataset == 'cifar10'): dummy_data_shape = [128,3,32,32]
-        elif(args.dataset == 'mnist'): dummy_data_shape = [32,1,28,28]
-        elif (args.dataset == 'imagenet'): dummy_data_shape = [256, 3, 64, 64]
-        else: pdb.set_trace()
-        if (rnd%args.eval_time == args.eval_time-1 and rnd>0):
-            if (args.aggregation == 'fedsgd'):
-                var = num_spokes
-                traced_model = torch.jit.trace(net_fed, torch.randn(dummy_data_shape).to(device))
-                correct, total = 0, 0
-                correct_top5 = 0
-                with torch.no_grad():
-                    for data in test_data:
-                        images, labels = data
-                        outputs = traced_model(images.to(device))
-                        if (args.dataset == 'mnist' or args.dataset == 'cifar10'):
-                            _, predicted = torch.max(outputs.data, 1)
-
-                            correct += (predicted == labels.to(device)).sum().item()
-                        elif (args.dataset == 'imagenet'):
-                            top_indices = torch.topk(outputs.data, 5)[1].t()
-                            matched = top_indices.eq(labels.to(device).view(1, -1).expand_as(top_indices))
-                            correct_top5 += matched.float().sum().item()
-                            _, predicted = torch.max(outputs.data, 1)
-                            correct += (predicted == labels.to(device)).sum().item()
-                            
-                        total += labels.size(0)
-                fed_test_acc_top5[int(rnd/args.eval_time)] = correct_top5/total 
-                fed_test_acc[int(rnd/args.eval_time)] = correct/total
-                if (correct/total > max_accuracy):
-                    best_model = deepcopy(net_fed)
-                    max_accuracy = correct / total
-                print('Round: %d, test_acc: %.8f' %(rnd, fed_test_acc[int(rnd/args.eval_time)]))
+            if args.self_weights == 0:
+                # If self_weights=0, we can use W_sh to aggregate to spokes
+                W_sh = utils.generate_hsl_matrices_final(args.num_hubs, args.num_spokes, b_s, aggregator_device,
+                                                         initial_spoke_hub_choices, args.bidirectional, args.self_weights)
+                final_spoke_wts = torch.mm(W_sh, hub_wts)
+                # No self addition needed
             else:
-                traced_models = []
-                #Below code is optimized to avoid redundant calculation for spokes under the same hub, and general enough to accommodate p2p in the same block: see smart use of 'var'
-                if (args.aggregation == 'p2p' or args.spoke_budget>1): var = num_spokes
-                #TODO - fix the if else loop to cover all cases
-                elif (args.aggregation == 'hsl' and args.spoke_budget==1): var = num_hubs
-                for i in range(var + 1):
-                    if i < var:
-                      if (args.aggregation == 'hsl' and args.spoke_budget==1):
-                          spoke_id = hub_to_spokes[i][0]
-                      elif (args.aggregation == 'p2p' or args.spoke_budget>1):
-                          spoke_id = i
-                      traced_models.append(torch.jit.trace(nets[spoke_id], torch.randn(dummy_data_shape).to(device))) 
-                    else:
-                      traced_models.append(torch.jit.trace(avg_model, torch.randn(dummy_data_shape).to(device)))
+                # self_weights=1
+                # We do NOT multiply W_sh with hub_wts here.
+                # Instead, each spoke picks hubs (bidirectional logic) and averages:
+                final_spoke_hub_choices = utils.get_final_spoke_hub_choices(args.num_hubs, args.num_spokes,
+                                                                           b_s, aggregator_device,
+                                                                           initial_spoke_hub_choices,
+                                                                           args.bidirectional)
+                # final_spoke_wts: for each spoke:
+                # (spoke_wts[s] + sum_of_chosen_hub_wts)/ (b_s+1)
+                final_spoke_wts = torch.zeros_like(spoke_wts)
+                for s in range(args.num_spokes):
+                    chosen_hubs = final_spoke_hub_choices[s]
+                    chosen_hub_models = hub_wts[chosen_hubs].mean(dim=0) if len(chosen_hubs)>0 else 0
+                    # Actually we want exact average including self: (self + sum_of chosen hubs)/ (b_s+1)
+                    # If we must average chosen hubs exactly rather than their mean:
+                    # sum_of_chosen = hub_wts[chosen_hubs].sum(dim=0)
+                    # final = (spoke_wts[s] + sum_of_chosen)/(b_s+1)
+                    # But chosen_hubs length = b_s, so mean = sum/b_s
+                    # sum_of_chosen = chosen_hub_models * b_s
+                    # final = (spoke_wts[s] + chosen_hub_models * b_s)/(b_s+1)
+                    # This yields the same result as summation form.
+                    sum_of_chosen = chosen_hub_models * b_s
+                    final_spoke_wts[s] = (spoke_wts[s] + sum_of_chosen)/(b_s+1)
 
+            global_model = utils.vec_to_model(torch.mean(final_spoke_wts, dim=0), net_name, inp_dim, out_dim, aggregator_device)
 
-                    acc = utils.compute_test_accuracy(traced_models[i], test_data, device)
-                    if (i < var):
-                      local_test_acc[int(rnd/args.eval_time)][spoke_id] = acc                
-                      if (args.aggregation == 'hsl' and args.spoke_budget==1):
-                        for spoke_id in hub_to_spokes[i][1:]:
-                          local_test_acc[int(rnd/args.eval_time)][spoke_id] = acc                
-                    else:
-                      test_acc[int(rnd/args.eval_time)] = acc
-                if (save_cdist):
-                    print ('Round: %d, predist: %.8f, postdist: %.8f, test_acc:[%.3f, %.3f]->%.3f' %(rnd, predist[int(rnd/args.eval_time)], postdist[int(rnd/args.eval_time)], min(local_test_acc[int(rnd/args.eval_time)]), max(local_test_acc[int(rnd/args.eval_time)]), test_acc[int(rnd/args.eval_time)]))      
-                else:
-                    print ('Round: %d, test_acc:[%.3f, %.3f]->%.3f' %(rnd, min(local_test_acc[int(rnd/args.eval_time)]), max(local_test_acc[int(rnd/args.eval_time)]), test_acc[int(rnd/args.eval_time)]))      
-            time_taken = time.time() - start_time
-            hrs = int(time_taken/3600)
-            mins = int(int(time_taken/60) - hrs*60)
-            secs = int(time_taken - hrs*3600 - mins*60)
-            print("Time taken %d hr %d min %d sec" %(hrs, mins, secs))
-        if ((rnd%args.save_time == args.save_time-1 and rnd>0) or (rnd == num_rounds-1)):
-            if (args.aggregation == 'fedsgd'): 
-                np.save(filename+'_test_acc.npy', fed_test_acc)
-                np.save(filename+'_train_loss.npy', fed_train_loss)
-                torch.save(net_fed.state_dict(), filename+'_model.pth')
-                #torch.save(best_model.state_dict(), filename+'_best_model.pth')
-                if (args.dataset == 'imagenet'):
-                    np.save(filename+'_top5_test_acc.npy', fed_test_acc_top5)
-            else:
-                np.save(filename+'_local_test_acc.npy', local_test_acc)
-                np.save(filename+'_consensus_test_acc.npy', test_acc)
-                if (save_cdist):
-                    np.save(filename+'_postdist.npy', postdist)
-                    np.save(filename+'_predist.npy', predist)
-                    np.save(filename+'_recon_real.npy', recon_real)
-                    np.save(filename+'_recon_est.npy', recon_est)
-                    
-                    torch.save(avg_model.state_dict(), filename+'_model.pth')
-        save_args = dict(args.__dict__).copy()
-        save_args.update(variables)
-        with open(filename + '_args.txt', 'w') as f:
-            json.dump(save_args, f, indent=2)
+            if (rnd+1)%args.eval_time==0:
+                spoke_accs=[]
+                for s_id in range(args.num_spokes):
+                    s_model = utils.vec_to_model(final_spoke_wts[s_id], net_name, inp_dim, out_dim, aggregator_device)
+                    traced_model = torch.jit.trace(deepcopy(s_model),
+                                                   torch.randn([batch_size]+utils.get_input_shape(args.dataset)).to(aggregator_device))
+                    loss, acc = utils.evaluate_global_metrics(traced_model, test_data, aggregator_device)
+                    spoke_accs.append(acc)
+                metrics['round'].append(rnd+1)
+                metrics['spoke_acc'].append(spoke_accs)
+                print(f"Round {rnd+1}, Spoke Acc range: [{min(spoke_accs):.4f}, {max(spoke_accs):.4f}]")
+
+    with open(filename + '_metrics.json', 'w') as f:
+        json.dump(metrics, f, indent=2)
+    print("Training complete.")
 
 if __name__ == "__main__":
-    args = utils.parse_args()
+    args = parse_args()
     main(args)
