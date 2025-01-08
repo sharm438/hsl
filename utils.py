@@ -26,11 +26,10 @@ class DistributedData:
         self.wts = wts
         self.label_distribution = label_distribution
 
-def load_data(dataset_name, batch_size, fraction=1.0):
+def load_data(dataset_name, batch_size, lr, fraction=1.0):
     if dataset_name=='mnist':
         num_inputs, num_outputs = 28*28, 10
         net_name = 'lenet'
-        lr = 0.01
         if batch_size is None: batch_size=32
         transform = transforms.Compose([
             transforms.ToTensor(),
@@ -47,7 +46,6 @@ def load_data(dataset_name, batch_size, fraction=1.0):
     elif dataset_name=='cifar10':
         num_inputs, num_outputs = 32*32*3,10
         net_name='cifar_cnn'
-        lr=0.01
         if batch_size is None: batch_size=128
         transform_train=transforms.Compose([
             transforms.RandomCrop(32,padding=4),

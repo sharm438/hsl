@@ -72,7 +72,7 @@ def main(args):
     filename = os.path.join(outputs_path, args.exp)
 
     # Load data
-    trainObject = utils.load_data(args.dataset, args.batch_size, args.fraction)
+    trainObject = utils.load_data(args.dataset, args.batch_size, args.lr, args.fraction)
     data, labels = trainObject.train_data, trainObject.train_labels
     test_data = trainObject.test_data
     inp_dim = trainObject.num_inputs
