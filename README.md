@@ -1,218 +1,206 @@
-Below is an **updated README** that incorporates the **new P2P Local** (EL Local) aggregation and the **revised HSL** three-stage aggregation scheme, as well as example commands to run each mode. Comments are added throughout to clarify the roles of each hyperparameter and aggregator.
+Below is a sample **README** for this code base. It contains an overview of the purpose, lists the important command-line arguments (with emphasis on the “store_true” type arguments), and provides example runs for various aggregation modes—**Federated Learning** (`fedsgd`), **EL Oracle** (`p2p`), **EL Local** (`p2p_local`), and **Hubs-and-Spokes Learning** (`hsl`).
 
+---
 
 # README
 
 ## Overview
 
-This code implements various distributed and federated learning paradigms:
+This repository implements a variety of distributed/federated learning paradigms with *non-IID* data distribution, including:
 
-1. **Federated Learning (FL / `fedsgd`)**  
-   A server aggregates updates from multiple clients (spokes) via weighted averaging.
+- **Federated Learning** (`fedsgd`): A traditional server-based approach where a global parameter server averages updates from the nodes (spokes).
+- **EL Oracle** (`p2p`): A peer-to-peer method using a *centrally constructed* \(k\)-regular mixing graph.
+- **EL Local** (`p2p_local`): A truly distributed peer-to-peer method where each node randomly picks \(k\) neighbors per round (without a global graph).
+- **Hubs-and-Spokes Learning** (`hsl`): A three-step process involving multiple hubs and spokes exchanging their models in different stages.
 
-2. **Peer-to-Peer (P2P) Learning**  
-   - **`p2p`** (EL Oracle): A *centrally coordinated* \(k\)-regular graph. Each node has a fixed indegree and outdegree = \(k\).  
-   - **`p2p_local`** (EL Local): A purely *distributed* approach without a centrally maintained graph. Each node i **chooses** exactly \(k\) neighbors (outdegree = \(k\)), but the indegree is unconstrained (i.e., you can be chosen by any number of neighbors).  
+### Key Features
 
-3. **Hubs-and-Spokes Learning (HSL / `hsl`)**  
-   Multiple hubs and spokes coordinate in **three** steps each round:
-   1. Hubs gather from \(b_{hs}\) spokes (the hub’s *fixed indegree*).  
-   2. Hubs run an “EL Local” mixing among themselves, each with an outdegree = \(b_{hh}\).  
-   3. Spokes gather from \(b_{sh}\) hubs (the spoke’s *fixed indegree*).
-
-This code supports non-IID data distributions, multiple datasets (MNIST and CIFAR-10), different sampling strategies (round-robin or random), and flexible configurations for the number of nodes, hubs, local training steps, and more.  
+- **Non-IID data** distribution among spokes  
+- **Multiple datasets** (MNIST, CIFAR-10)  
+- **Flexible aggregator** choices (FL, P2P, P2P Local, HSL)  
+- **Seed control** for reproducibility  
+- **Optional** monitoring of model drift, node degrees, and graph simulation
 
 ---
 
-## Inputs and Arguments
+## Installation
 
-A summary of the key command-line options:
-
-- `--exp`: **Experiment name** (used to name the output JSON metrics file).
-- `--dataset`: Which dataset to use. Currently supports:
-  - `mnist`
-  - `cifar10`
-- `--fraction`: Fraction of the dataset to use (e.g. `1.0` uses the entire training set).
-- `--bias`: Degree of non-IIDness:
-  - `0.0` is effectively IID
-  - Higher values → more skewed or “non-IID” distribution across nodes
-- `--aggregation`: **Type of aggregation** among nodes:
-  - `fedsgd` for Federated Learning
-  - `p2p` for EL Oracle (centrally-coordinated P2P)
-  - `p2p_local` for EL Local (fully distributed P2P)
-  - `hsl` for Hubs-and-Spokes Learning (3-step aggregation)
-- `--num_spokes`: Number of “spoke” (client) nodes.
-- `--num_hubs`: Number of hubs (for HSL). Ignored if `aggregation` is not `hsl`.
-- `--num_rounds`: Number of global training rounds.
-- `--num_local_iters`: Number of local gradient steps (mini-batches) each node runs per round.
-- `--batch_size`: Local batch size during training at each node.
-- `--eval_time`: Evaluate and record metrics every `eval_time` rounds.
-- `--gpu`: GPU index to use (e.g. `0` or `1`). Use `-1` to force CPU training.
-- `--lr`: Learning rate for **local** training at each node.
-- `--sample_type`: Method for selecting local mini-batches:
-  - `round_robin`
-  - `random`
-
-### P2P-Specific Arguments
-
-- `--k`:  
-  - For **`p2p`** (EL Oracle): The outdegree (and indegree) is exactly \(k\), enforced by a centrally generated \(k\)-regular graph.  
-  - For **`p2p_local`** (EL Local): The outdegree = \(k\), but the indegree is unconstrained.
-
-### HSL-Specific Arguments
-
-- `--b_hs`: **Step 1** (hub “indegree”) → Each hub randomly selects `b_hs` spokes and averages them.  
-- `--b_hh`: **Step 2** (hub-to-hub EL Local) → Each hub picks `b_hh` neighbors among the hubs, plus itself, and averages all their models.  
-- `--b_sh`: **Step 3** (spoke “indegree”) → Each spoke randomly selects `b_sh` hubs and averages their models.
-
-> **Note**: The older HSL flags `--bidirectional` and `--self_weights` from the legacy code are retained for backward compatibility but are not used in the *new* 3-step HSL logic.
+1. Install [PyTorch](https://pytorch.org/) (version >= 1.8 recommended).
+2. Install torchvision or other dependencies if needed:
+   ```bash
+   pip install torchvision
+   ```
+3. Clone this repository and ensure you have a `python` environment with `numpy`, `argparse`, etc.
 
 ---
 
-## HSL Logic (3 Steps)
+## Usage
 
-1. **Hubs gather from `b_hs` spokes**:  
-   - *Hub indegree* = `b_hs`; each hub picks `b_hs` spokes at random (or with replacement if `b_hs` > #spokes).  
-   - The hub’s model becomes the average of these `b_hs` spoke models.
+All scripts can be run via:
 
-2. **Hubs mix among themselves with “EL Local”**:  
-   - Each hub has outdegree = `b_hh`. The hubs pick `b_hh` other hubs at random, plus themselves, and average those models.  
-   - Indegree is not fixed; some hub might be chosen by many peers, or none.
+```bash
+python main.py [options]
+```
 
-3. **Spokes gather from `b_sh` hubs**:  
-   - *Spoke indegree* = `b_sh`; each spoke picks `b_sh` hubs at random, averages them, and that becomes the spoke’s updated model.
+### Core Arguments
 
----
+| **Argument**                 | **Type**     | **Description**                                                                                                                                                                                                    |
+|------------------------------|--------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `--exp`                      | `str`        | **Experiment name** (used for output JSON files, e.g., `<exp>_metrics.json`).                                                                                                                                      |
+| `--dataset`                  | `str`        | Dataset to use: `mnist` or `cifar10`.                                                                                                                                                                              |
+| `--fraction`                 | `float`      | Fraction of the dataset to use (e.g., `1.0` = entire training set, `0.5` = half).                                                                                                                                  |
+| `--bias`                     | `float`      | Non-IIDness level. `0.0` → effectively IID, larger → more skewed distribution.                                                                                                                                     |
+| `--aggregation`              | `str`        | Aggregation method: `fedsgd`, `p2p`, `p2p_local`, or `hsl`.                                                                                                                                                        |
+| `--num_spokes`               | `int`        | Number of “spoke” nodes (clients).                                                                                                                                                                                 |
+| `--num_hubs`                 | `int`        | Number of hubs (applies only to `hsl`).                                                                                                                                                                           |
+| `--num_rounds`               | `int`        | Number of global communication rounds.                                                                                                                                                                            |
+| `--num_local_iters`          | `int`        | Number of local gradient steps each node performs per round.                                                                                                                                                       |
+| `--batch_size`               | `int`        | Local batch size on each node.                                                                                                                                                                                    |
+| `--eval_time`                | `int`        | Evaluate metrics every `eval_time` rounds.                                                                                                                                                                        |
+| `--gpu`                      | `int`        | GPU index to use (e.g. `0`). Use `-1` for CPU.                                                                                                                                                                     |
+| `--lr`                       | `float`      | Learning rate used in local training.                                                                                                                                                                             |
+| `--sample_type`              | `str`        | Local mini-batch sampling method: `round_robin` or `random`.                                                                                                                                                      |
+| `--seed`                     | `int`        | Random seed for reproducibility. `<=0` means no fixed seed.                                                                                                                                                       |
 
-## Outputs
+#### Peer-to-Peer (P2P) Arguments
 
-- A JSON file `<exp>_metrics.json` containing:
-  - **Round indices**
-  - **Accuracy & Loss** (depending on aggregator type)
-    - FL (`fedsgd`): Global model metrics
-    - P2P (`p2p` or `p2p_local`): Each node’s local metrics
-    - HSL (`hsl`): Spoke metrics
-- Console logs per evaluation round.
+| **Argument**  | **Type** | **Description**                                                                                                   |
+|---------------|----------|-------------------------------------------------------------------------------------------------------------------|
+| `--k`         | `int`    | - **EL Oracle** (`p2p`) uses a centrally generated \(k\)-regular graph.  <br>- **EL Local** (`p2p_local`) each node chooses \(k\) neighbors. |
+
+#### Hubs-and-Spokes (HSL) Arguments
+
+| **Argument**  | **Type** | **Description**                                                                                                                                                                                              |
+|---------------|----------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `--b_hs`      | `int`    | **Stage 1**: Each hub randomly selects `b_hs` spokes and averages them. (Hub “indegree” from spokes)                                                                                                         |
+| `--b_hh`      | `int`    | **Stage 2**: Hubs mix with each other using an “EL Local” style aggregator with outdegree = `b_hh`.                                                                                                         |
+| `--b_sh`      | `int`    | **Stage 3**: Each spoke randomly selects `b_sh` hubs to average (Spoke “indegree” from hubs).                                                                                                               |
+
+### **store_true** Arguments
+
+| **Argument**                | **Type**       | **Description**                                                                                                                                                                                                                |
+|-----------------------------|----------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `--monitor_model_drift`     | `store_true`   | If set, computes the **model drift** among spokes (distance from the spoke models to their mean) **before** and **after** the aggregator step, each time we do an evaluation (`eval_time` intervals).                                                                 |
+| `--monitor_degree`          | `store_true`   | If set, computes and logs node in/out degrees every round (e.g., how many neighbors chose each node in P2P or HSL’s stages). This is saved separately (e.g., `<exp>_degree.json`).                                               |
+| `--graph_simulation_only`   | `store_true`   | If set, **no actual local training** is performed. Instead, the code only simulates the aggregator step (P2P / P2P Local / HSL) to obtain random mixing matrices each round. Useful for analyzing mixing properties, spectral gap, etc. |
 
 ---
 
 ## Example Runs
 
-### 1. **Federated Learning (FL) Example**
+Below are example commands showing how to run the different modes:
 
-```bash
-python main.py \
-  --exp fed_mnist \
-  --dataset mnist \
-  --fraction 1.0 \
-  --aggregation fedsgd \
-  --num_spokes 10 \
-  --num_rounds 100 \
-  --num_local_iters 2 \
-  --batch_size 32 \
-  --eval_time 10 \
-  --gpu 0 \
-  --lr 0.01 \
-  --bias 0.1
-```
+1. **Federated Learning (FL / `fedsgd`):**
+   ```bash
+   python main.py \
+       --exp fed_mnist \
+       --dataset mnist \
+       --fraction 1.0 \
+       --bias 0.0 \
+       --aggregation fedsgd \
+       --num_spokes 10 \
+       --num_rounds 50 \
+       --num_local_iters 1 \
+       --batch_size 32 \
+       --eval_time 5 \
+       --gpu -1 \
+       --lr 0.01
+   ```
+   This runs standard federated averaging on MNIST with 10 spokes, using CPU (`--gpu -1`) for 50 rounds.
 
-- Federated learning on MNIST with 10 spokes and nearly IID data (`bias=0.1`).
-- 2 local gradient steps each round, batch size 32.
-- Evaluates every 10 rounds; logs final metrics in `fed_mnist_metrics.json`.
+2. **EL Oracle (P2P / `p2p`):**
+   ```bash
+   python main.py \
+       --exp p2p_mnist \
+       --dataset mnist \
+       --aggregation p2p \
+       --k 2 \
+       --num_spokes 10 \
+       --num_rounds 50 \
+       --num_local_iters 1 \
+       --batch_size 32 \
+       --eval_time 5 \
+       --gpu 0 \
+       --lr 0.01 \
+       --bias 0.3
+   ```
+   - **EL Oracle** uses a globally generated *\(k\)-regular* matrix with `k=2`.  
+   - Each round, the aggregator re-samples or reuses a random permutation to build that matrix.
 
----
+3. **EL Local (P2P Local / `p2p_local`):**
+   ```bash
+   python main.py \
+       --exp p2p_local_mnist \
+       --dataset mnist \
+       --aggregation p2p_local \
+       --k 3 \
+       --num_spokes 10 \
+       --num_rounds 50 \
+       --num_local_iters 2 \
+       --batch_size 32 \
+       --eval_time 5 \
+       --gpu 0 \
+       --lr 0.01 \
+       --bias 0.5
+   ```
+   - **EL Local** has each node choose `k=3` random neighbors (plus itself) every round, with no global coordinator.
 
-### 2. **EL Oracle (P2P) Example**
-
-```bash
-python main.py \
-  --exp p2p_cifar_oracle \
-  --dataset cifar10 \
-  --fraction 0.5 \
-  --aggregation p2p \
-  --num_spokes 20 \
-  --num_rounds 200 \
-  --num_local_iters 1 \
-  --batch_size 64 \
-  --eval_time 20 \
-  --gpu 0 \
-  --lr 0.005 \
-  --k 2 \
-  --sample_type random \
-  --bias 0.5
-```
-
-- **`p2p`** uses a *centrally generated* \(k=2\) regular graph among the 20 nodes.
-- Non-IIDness = 0.5, random sampling for local batches, CIFAR-10 but only 50% of the data.
-- The system logs local accuracies for each node every 20 rounds.
-
----
-
-### 3. **EL Local (P2P Local) Example**
-
-```bash
-python main.py \
-  --exp p2p_local_mnist \
-  --dataset mnist \
-  --aggregation p2p_local \
-  --num_spokes 10 \
-  --num_rounds 50 \
-  --num_local_iters 2 \
-  --batch_size 32 \
-  --eval_time 5 \
-  --gpu -1 \
-  --lr 0.01 \
-  --k 3 \
-  --sample_type round_robin \
-  --bias 0.2
-```
-
-- **`p2p_local`** uses *outdegree = 3* for each node, with no centralized graph.
-- 10 nodes, MNIST dataset, 50 rounds. Evaluates every 5 rounds.
-- Runs on CPU (`--gpu -1`).
-
----
-
-### 4. **HSL (Hubs-and-Spokes Learning) with New 3-Step Aggregation**
-
-```bash
-python main.py \
-  --exp hsl_cifar_new \
-  --dataset cifar10 \
-  --aggregation hsl \
-  --fraction 1.0 \
-  --num_spokes 10 \
-  --num_hubs 3 \
-  --num_rounds 100 \
-  --num_local_iters 3 \
-  --batch_size 64 \
-  --eval_time 10 \
-  --gpu 0 \
-  --bias 0.5 \
-  --lr 0.01 \
-  --b_hs 2 \
-  --b_hh 1 \
-  --b_sh 3
-```
-
-In this run:
-
-1. **Step 1**: Each of the 3 hubs picks `b_hs=2` spokes, averages them.  
-2. **Step 2**: Each hub picks `b_hh=1` other hub (plus itself) and averages → “EL Local” among the 3 hubs.  
-3. **Step 3**: Each of the 10 spokes picks `b_sh=3` hubs and averages them to update.
-
-- Biased (non-IID) CIFAR-10 with `bias=0.5`.
-- 3 local gradient steps each round, batch size 64.
-- Evaluates every 10 rounds.
+4. **HSL (Hubs-and-Spokes Learning / `hsl`):**
+   ```bash
+   python main.py \
+       --exp hsl_cifar \
+       --dataset cifar10 \
+       --aggregation hsl \
+       --num_spokes 12 \
+       --num_hubs 3 \
+       --b_hs 2 \
+       --b_hh 1 \
+       --b_sh 2 \
+       --num_rounds 80 \
+       --num_local_iters 2 \
+       --batch_size 64 \
+       --eval_time 10 \
+       --gpu 0 \
+       --lr 0.005 \
+       --bias 0.4
+   ```
+   Here, each round has:
+   1. **Stage 1** (`b_hs=2`): Hubs each pick 2 spokes.
+   2. **Stage 2** (`b_hh=1`): Hubs mix among themselves (each picks 1 hub).
+   3. **Stage 3** (`b_sh=2`): Spokes each pick 2 hubs to update from.
 
 ---
 
-## Tips
+## Additional Notes
 
-- Adjust `num_local_iters`, `batch_size`, `bias`, or `fraction` to tune training speed and difficulty.
-- If training is slow or memory-limited, reduce `num_spokes`, `num_hubs`, or switch to CPU by using `--gpu -1`.
-- For debugging or faster prototyping, reduce `eval_time` to evaluate more often (at the cost of runtime overhead).
+- Use `--monitor_model_drift` to track and log how much node models deviate from each other each round.
+- Use `--monitor_degree` to track and log how many connections each node has in P2P or each stage in HSL.
+- For debugging or faster iteration, you can run **graph simulation only** by adding `--graph_simulation_only`. This **skips all data loading and local training** and only simulates the aggregator steps:
+  ```bash
+  python main.py \
+      --exp sim_p2p \
+      --aggregation p2p_local \
+      --num_spokes 10 \
+      --k 2 \
+      --num_rounds 30 \
+      --graph_simulation_only
+  ```
+  This will generate random mixing matrices, compute their average, spectral gap, etc., and save them to JSON, **without** doing any real training.
+
+- **Reproducibility**: You can fix a seed for data partitioning and model initialization using `--seed <positive_int>`. For example:
+  ```bash
+  python main.py --seed 123 --aggregation p2p --k 2 ...
+  ```
+
+- **Output Files**:  
+  - **`<exp>_metrics.json`**: Contains training/test metrics, spectral gap, average mixing matrix, etc., depending on aggregator.  
+  - **`<exp>_degree.json`**: If `--monitor_degree` is set, this contains arrays of node in/out degrees per round.
 
 ---
 
-**Enjoy experimenting with FL, P2P, and HSL methods!**
+## Contact / Contributing
+
+- Contributions or pull requests are welcome!  
+- For further issues or questions, please open an Issue on this repository.
+
+Enjoy exploring **Federated**, **P2P**, and **Hubs-and-Spokes** learning methods in a single code base!
