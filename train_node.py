@@ -1,64 +1,67 @@
-# train_node.py
+import argparse
 import torch
-import torch.optim as optim
-import torch.nn as nn
-import models
+import os
+import time
 import utils
-import numpy as np
+import models
+from copy import deepcopy
 
-def local_train_worker_inline(node_id, global_wts, local_data, local_label, 
-                              inp_dim, out_dim, net_name,
-                              num_local_iters, batch_size, lr, device,
-                              sample_type, rr_indices):
+def parse_args():
+    parser = argparse.ArgumentParser()
+    # (same arguments as in main or can be omitted if not called directly)
+    return parser.parse_args()
+
+def local_train_worker_inline(
+    node_id,
+    global_wts,
+    local_data,
+    local_label,
+    inp_dim,
+    out_dim,
+    net_name,
+    num_local_iters,
+    batch_size,
+    lr,
+    device,
+    sample_type,
+    rr_indices
+):
     """
-    SEQUENTIAL local training for 'num_local_iters' mini-batches.
-    If sample_type == "random", pick random samples each iteration.
-    If sample_type == "round_robin", we do wrap-around via modulo.
-    'rr_indices[node_id]' is a persistent pointer so that each call continues
-    from where the previous round left off.
+    Inline version of local training (no multiprocessing).
     """
-    train_device = device
-    
-    # Reconstruct the model from global_wts
-    model = utils.vec_to_model(global_wts.to(train_device),
-                               net_name, inp_dim, out_dim, train_device)
-    criterion = nn.CrossEntropyLoss().to(train_device)
-    optimizer = optim.SGD(model.parameters(), lr=lr)
+    # Rebuild local model from global weights
+    local_model = utils.vec_to_model(global_wts, net_name, inp_dim, out_dim, device)
+    local_model.train()
 
-    model.train()
-    data_size = local_data.shape[0]
-    if data_size == 0:
-        # Edge case: if some node truly has no data, return unchanged
-        return utils.model_to_vec(model).cpu()
-
-    # Persistent pointer for round-robin
-    rr_idx = rr_indices[node_id]
-
+    # We'll iterate 'num_local_iters' times over mini-batches
+    idx_start = rr_indices[node_id]
     for _ in range(num_local_iters):
-        if sample_type == "random":
-            # If batch_size > data_size, we do replace=True
-            if batch_size <= data_size:
-                idxs = np.random.choice(data_size, batch_size, replace=False)
-            else:
-                idxs = np.random.choice(data_size, batch_size, replace=True)
-        elif sample_type == "round_robin":
-            # --- ONLY DO WRAP-AROUND VIA MODULO ---
-            idxs = [(rr_idx + i) % data_size for i in range(batch_size)]
-            rr_idx = (rr_idx + batch_size) % data_size
+        if sample_type == 'round_robin':
+            # take the next batch sequentially
+            end_idx = idx_start + batch_size
+            if end_idx > local_data.shape[0]:
+                # wrap around
+                end_idx = batch_size
+                idx_start = 0
+            x = local_data[idx_start:end_idx].to(device)
+            y = local_label[idx_start:end_idx].to(device)
+            idx_start = end_idx
+        else:
+            # random
+            indices = torch.randint(0, local_data.shape[0], (batch_size,), device=local_data.device)
+            x = local_data[indices].to(device)
+            y = local_label[indices].to(device)
 
-        # Now index safely
-        batch_x = local_data[idxs].to(train_device)
-        batch_y = local_label[idxs].to(train_device)
+        # one forward/backward pass
+        loss_fn = torch.nn.CrossEntropyLoss()
+        out = local_model(x)
+        loss = loss_fn(out, y)
 
-        optimizer.zero_grad()
-        outputs = model(batch_x)
-        loss = criterion(outputs, batch_y)
+        local_model.zero_grad()
         loss.backward()
-        optimizer.step()
+        for p in local_model.parameters():
+            p.data -= lr * p.grad
 
-    # Save updated rr_idx for next call
-    rr_indices[node_id] = rr_idx
-
-    # Return updated weights as a CPU tensor
-    updated_wts = utils.model_to_vec(model).cpu()
-    return updated_wts
+    rr_indices[node_id] = idx_start
+    # return new weights
+    return utils.model_to_vec(local_model).cpu()
