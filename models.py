@@ -7,6 +7,13 @@ def load_net(net_name, num_inp, num_out, device):
         model = LeNet()
     elif net_name=='cifar_cnn':
         model = CIFAR_CNN(num_classes=num_out)
+    # ---- NEW FOR CITYSCAPES ----
+    elif net_name=='cityscapes_seg':
+        # A toy segmentation model (extremely simplistic). 
+        model = SimpleSegModel(num_classes=num_out)
+    else:
+        raise ValueError(f"Unknown net_name={net_name}")
+
     model.to(device)
     return model
 
@@ -46,4 +53,23 @@ class CIFAR_CNN(nn.Module):
         x=x.view(-1,64*16*16)
         x=F.relu(self.fc1(x))
         x=self.fc2(x)
+        return x
+
+# ---- NEW FOR CITYSCAPES ----
+class SimpleSegModel(nn.Module):
+    """
+    A minimal segmentation model for demonstration:
+      - 2 conv layers
+      - directly outputs [N, num_classes, H, W]
+    Obviously insufficient for real Cityscapes performance,
+    but demonstrates how to integrate a segmentation net.
+    """
+    def __init__(self, num_classes=20):
+        super(SimpleSegModel, self).__init__()
+        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(16, num_classes, kernel_size=3, padding=1)
+
+    def forward(self, x):
+        x = F.relu(self.conv1(x))   # [N, 16, H, W]
+        x = self.conv2(x)          # [N, num_classes, H, W]
         return x
