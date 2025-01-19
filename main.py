@@ -596,7 +596,7 @@ def main(args):
             spectral_gap = (1.0 - e_sorted[1]).item()
             metrics['spectral_gap'] = spectral_gap
             metrics['W_eff'] = W_eff.tolist()
-            print(f"[Info] HSL average spectral gap: {spectral_gap:.4f}")
+            print(f"[Info] HSL average spectral gap: {spectral_gap:.8f}")
 
     # save metrics
     with open(filename + '_metrics.json', 'w') as f:
