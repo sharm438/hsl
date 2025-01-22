@@ -33,8 +33,8 @@ def plot_candles(
     # Color scheme for the aggregators:
     color_map = {
         'p2p': 'orange',
-        'p2p_local': 'orange',
-        'hsl': 'blue'
+        'p2p_local': 'maroon',
+        'hsl': 'indigo'
     }
     # Slight shift so HSL or ELL points with close 'cost' won't overlap too much.
     x_shift_map = {
@@ -110,7 +110,7 @@ def plot_candles(
                     color=candle_color, alpha=0.8, linewidth=1)
         
         # Candle body
-        half_width = 8.0
+        half_width = 8.0#**2
         ax.fill_between([x - half_width, x + half_width],
                         y1=q1, y2=q3,
                         color=candle_color, alpha=0.4, linewidth=0)
@@ -149,7 +149,7 @@ def plot_candles(
     
     ax.set_xlabel("#edges in the graph")
     ax.set_ylabel("Final Spoke Accuracy")
-    ax.set_title(title)
+    #ax.set_title(title)
     ax.grid(True)
     ax.legend()
     plt.tight_layout()
@@ -271,7 +271,7 @@ def plot_drift(
     # Rename y-axis
     ax.set_ylabel("-log(mixing ratio)")
     ax.set_xlabel("Time")
-    ax.set_title(title)
+    #ax.set_title(title)
     ax.legend()
     
     # Make extra room on the right to fit the text
@@ -296,12 +296,12 @@ if __name__ == "__main__":
             'cost': 100,
             'config': (100, 2)
         },
-        {
-            'filename': "ell_cifar10_s100k3_seed1_metrics.json",
-            'aggregator': "p2p",
-            'cost': 150,
-            'config': (100, 3)
-        },
+        #{
+        #    'filename': "ell_cifar10_s100k3_seed1_metrics.json",
+        #    'aggregator': "p2p",
+        #    'cost': 150,
+        #    'config': (100, 3)
+        #},
         {
             'filename': "ell_cifar10_s100k4_seed1_metrics.json",
             'aggregator': "p2p",
@@ -315,16 +315,28 @@ if __name__ == "__main__":
             'config': (100, 5)
         },
         {
-            'filename': "ell_cifar10_s100k8_seed1_metrics.json",
+            'filename': "ell_cifar10_s100k7_seed2_metrics.json",
             'aggregator': "p2p",
-            'cost': 400,
-            'config': (100, 8)
+            'cost': 350,
+            'config': (100, 7)
         },
+        #{
+        #    'filename': "ell_cifar10_s100k8_seed1_metrics.json",
+        #    'aggregator': "p2p",
+        #    'cost': 400,
+        #    'config': (100, 8)
+        #},
         {
-            'filename': "ell_cifar10_s100k10_seed2_metrics.json",
+            'filename': "ell_cifar10_s100k10_seed3_metrics.json",
             'aggregator': "p2p",
             'cost': 500,
             'config': (100, 10)
+        },
+        {
+            'filename': "ell_cifar10_s100k13_seed1_metrics.json",
+            'aggregator': "p2p",
+            'cost': 650,
+            'config': (100, 13)
         },
         {
             'filename': "ell_cifar10_s100k15_seed1_metrics.json",
@@ -333,82 +345,254 @@ if __name__ == "__main__":
             'config': (100, 15)
         },
         {
-            'filename': "ell_cifar10_s100k20_seed2_metrics.json",
+            'filename': "ell_cifar10_s100k18_seed1_metrics.json",
+            'aggregator': "p2p",
+            'cost': 900,
+            'config': (100, 18)
+        },
+        {
+            'filename': "ell_cifar10_s100k20_seed4_metrics.json",
             'aggregator': "p2p",
             'cost': 1000,
             'config': (100, 20)
         },
+        {
+            'filename': "ell_cifar10_s100k22_seed2_metrics.json",
+            'aggregator': "p2p",
+            'cost': 1100,
+            'config': (100, 22)
+        },
+        {
+            'filename': "ell_cifar10_s100k24_seed1_metrics.json",
+            'aggregator': "p2p",
+            'cost': 1200,
+            'config': (100, 24)
+        },
+        
 
         # HSL
+        #{
+        #    'filename': "hsl_cifar10_s100h10_bud_1_1_1_seed1_metrics.json",
+        #    'aggregator': "hsl",
+        #    'cost': 115,
+        #    'config': (100, 10, 1, 1, 1)
+        #},
+        #{
+        #    'filename': "hsl_cifar10_s100h10_bud_1_2_1_seed1_metrics.json",
+        #    'aggregator': "hsl",
+        #    'cost': 120,
+        #    'config': (100, 10, 1, 2, 1)
+        #},
         {
             'filename': "hsl_cifar10_s100h10_bud_2_1_1_seed1_metrics.json",
             'aggregator': "hsl",
-            'cost': 140,
+            'cost': 125,
             'config': (100, 10, 2, 1, 1)
         },
         {
             'filename': "hsl_cifar10_s100h20_bud_2_1_2_seed1_metrics.json",
             'aggregator': "hsl",
-            'cost': 180,
+            'cost': 150,
             'config': (100, 20, 2, 1, 1)
         },
         {
             'filename': "hsl_cifar10_s100h5_bud_2_2_2_seed2_metrics.json",
             'aggregator': "hsl",
-            'cost': 225,
+            'cost': 215,
             'config': (100, 5, 2, 2, 2)
         },
+        #{
+        #    'filename': "hsl_cifar10_s100h10_bud_8_2_2_seed1_metrics.json",
+        #    'aggregator': "hsl",
+        #    'cost': 290,
+        #    'config': (100, 10, 8, 2, 2)
+        #},
         {
-            'filename': "hsl_cifar10_s100h10_bud_8_2_2_seed1_metrics.json",
+            'filename': "hsl_cifar10_s100h20_bud_10_5_1_seed1_metrics.json",
             'aggregator': "hsl",
-            'cost': 320,
-            'config': (100, 10, 8, 2, 2)
+            'cost': 350,
+            'config': (100, 20, 10, 5, 1)
         },
-        {
-            'filename': "hsl_cifar10_s100h10_bud_20_2_2_seed2_metrics.json",
-            'aggregator': "hsl",
-            'cost': 430,
-            'config': (100, 10, 20, 2, 2)
-        },
+        #{
+        #    'filename': "hsl_cifar10_s100h10_bud_20_2_2_seed2_metrics.json",
+        #    'aggregator': "hsl",
+        #    'cost': 410,
+        #    'config': (100, 10, 20, 2, 2)
+        #},
         {
             'filename': "hsl_cifar10_s100h10_bud_30_3_2_seed2_metrics.json",
             'aggregator': "hsl",
-            'cost': 540,
+            'cost': 515,
             'config': (100, 10, 30, 3, 2)
         },
         {
             'filename': "hsl_cifar10_s100h10_bud_30_3_3_seed1_metrics.json",
             'aggregator': "hsl",
-            'cost': 640,
-            'config': (100, 15, 30, 3, 3)
+            'cost': 615,
+            'config': (100, 10, 30, 3, 3)
         },
-        {
-            'filename': "hsl_cifar10_s100h10_bud_40_3_3_seed1_metrics.json",
-            'aggregator': "hsl",
-            'cost': 740,
-            'config': (100, 10, 40, 3, 3)
-        },
+        #{
+        #    'filename': "hsl_cifar10_s100h10_bud_40_3_3_seed1_metrics.json",
+        #    'aggregator': "hsl",
+        #    'cost': 715,
+        #    'config': (100, 10, 40, 3, 3)
+        #},
         {
             'filename': "hsl_cifar10_s100h10_bud_40_3_4_seed1_metrics.json",
             'aggregator': "hsl",
-            'cost': 840,
+            'cost': 815,
             'config': (100, 10, 40, 3, 4)
         },
+        #{
+        #    'filename': "hsl_cifar10_s100h10_bud_40_5_5_seed1_metrics.json",
+        #    'aggregator': "hsl",
+        #    'cost': 925,
+        #    'config': (100, 10, 40, 5, 5)
+        #},
+        
+        {
+            'filename': "hsl_cifar10_s100h15_bud_30_20_4_seed1_metrics.json",
+            'aggregator': "hsl",
+            'cost': 1000,
+            'config': (100, 15, 30, 20, 4)
+        },
+        {
+            'filename': "hsl_cifar10_s100h20_bud_30_20_3_seed1_metrics.json",
+            'aggregator': "hsl",
+            'cost': 1100,
+            'config': (100, 20, 30, 20, 3)
+        },
+        {
+            'filename': "hsl_cifar10_s100h20_bud_30_20_4_seed1_metrics.json",
+            'aggregator': "hsl",
+            'cost': 1200,
+            'config': (100, 20, 30, 20, 4)
+        },
+        
+        
     ]
     
+    experiments_exp1b = [
+        {
+            'filename': "ell_cifar10_s200k2_seed1_metrics.json",
+            'aggregator': "p2p",
+            'cost': 200,
+            'config': (200, 2)
+        },
+        {
+            'filename': "ell_cifar10_s200k5_seed1_metrics.json",
+            'aggregator': "p2p",
+            'cost': 500,
+            'config': (200, 5)
+        },
+        {
+            'filename': "ell_cifar10_s200k10_seed1_metrics.json",
+            'aggregator': "p2p",
+            'cost': 1000,
+            'config': (200, 10)
+        },
+        {
+            'filename': "ell_cifar10_s200k15_seed1_metrics.json",
+            'aggregator': "p2p",
+            'cost': 1500,
+            'config': (200, 15)
+        },
+        {
+            'filename': "ell_cifar10_s200k20_seed2_metrics.json",
+            'aggregator': "p2p",
+            'cost': 2000,
+            'config': (200, 20)
+        },
+        {
+            'filename': "ell_cifar10_s200k25_seed2_metrics.json",
+            'aggregator': "p2p",
+            'cost': 2500,
+            'config': (200, 25)
+        },
+        {
+            'filename': "ell_cifar10_s200k30_seed2_metrics.json",
+            'aggregator': "p2p",
+            'cost': 3000,
+            'config': (200, 30)
+        },
+        {
+            'filename': "ell_cifar10_s200k35_seed2_metrics.json",
+            'aggregator': "p2p",
+            'cost': 3500,
+            'config': (200, 35)
+        },
+        {
+            'filename': "ell_cifar10_s200k40_seed1_metrics.json",
+            'aggregator': "p2p",
+            'cost': 4000,
+            'config': (200, 40)
+        },
+
+        {
+            'filename': "hsl_cifar10_s200h15_bud_20_3_3_seed1_metrics.json",
+            'aggregator': "hsl",
+            'cost': 930,
+            'config': (200, 15, 20, 3, 3)
+        },        
+        #{
+        #    'filename': "hsl_cifar10_s200h20_bud_20_4_3_seed1_metrics.json",
+        #    'aggregator': "hsl",
+        #    'cost': 1040,
+        #    'config': (200, 20, 20, 4, 3)
+        #},
+        #{
+        #    'filename': "hsl_cifar10_s200h20_bud_30_4_3_seed1_metrics.json", #seed1 not a good choice
+        #    'aggregator': "hsl",
+        #    'cost': 1240,
+        #    'config': (200, 20, 30, 4, 3)
+        #},
+        {
+            'filename': "hsl_cifar10_s200h20_bud_40_4_3_seed1_metrics.json",
+            'aggregator': "hsl",
+            'cost': 1440,
+            'config': (200, 20, 40, 4, 3)
+        },
+        {
+            'filename': "hsl_cifar10_s200h50_bud_20_5_5_seed1_metrics.json",
+            'aggregator': "hsl",
+            'cost': 2125,
+            'config': (200, 50, 20, 5, 5)
+        },
+        {
+            'filename': "hsl_cifar10_s200h50_bud_20_5_7_seed1_metrics.json",
+            'aggregator': "hsl",
+            'cost': 2525,
+            'config': (200, 50, 20, 5, 7)
+        },
+        {
+            'filename': "hsl_cifar10_s200h40_bud_25_5_10_seed1_metrics.json",
+            'aggregator': "hsl",
+            'cost': 3100,
+            'config': (200, 40, 25, 5, 10)
+        },
+        {
+            'filename': "hsl_cifar10_s200h40_bud_25_5_12_seed1_metrics.json",
+            'aggregator': "hsl",
+            'cost': 3500,
+            'config': (200, 40, 25, 5, 12)
+        },
+         {
+            'filename': "hsl_cifar10_s200h50_bud_30_10_16_seed1_metrics.json",
+            'aggregator': "hsl",
+            'cost': 3950,
+            'config': (200, 50, 30, 10, 16)
+        },
+        
+        
+        
+    ]
+
     # --- Experiment 1: Candle plot for final accuracies ---
-    plot_candles(
-        experiments_exp1,
-        base_path="./outputs/",
-        title="HSL vs P2P: Final Accuracy Distribution",
-        output_filename="final_candle_plot.png"
-    )
+    plot_candles(experiments_exp1,base_path="./outputs/",title="HSL vs P2P: Final Accuracy Distribution",output_filename="exp_1a_s100.png")
+
+    # --- Experiment 1b: Candle plot for s=200 ---
+    #plot_candles(experiments_exp1b,base_path="./outputs/",title="HSL vs P2P: Final Accuracy Distribution",output_filename="exp_1b_s200.png")
     
     # --- Experiment 2: Drift ratio plot with new modifications ---
-    experiments_exp2 = experiments_exp1  # Reuse the same list, so ensure JSONs have pre_drift/post_drift
-    plot_drift(
-        experiments_exp2,
-        base_path="./outputs/",
-        title="Drift Ratio (pre_drift / post_drift) vs. Time",
-        output_filename="drift_plot.png"
-    )
+    #experiments_exp2 = experiments_exp1  # Reuse the same list, so ensure JSONs have pre_drift/post_drift
+    #plot_drift(experiments_exp2, base_path="./outputs/",title="Drift Ratio (pre_drift / post_drift) vs. Time", output_filename="drift_plot.png")
