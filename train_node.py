@@ -5,6 +5,7 @@ import time
 import utils
 import models
 from copy import deepcopy
+import pdb
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -53,14 +54,15 @@ def local_train_worker_inline(
             y = local_label[indices].to(device)
 
         # one forward/backward pass
+        
         loss_fn = torch.nn.CrossEntropyLoss()
         out = local_model(x)
         loss = loss_fn(out, y)
-
         local_model.zero_grad()
         loss.backward()
         for p in local_model.parameters():
-            p.data -= lr * p.grad
+            if p.grad is not None: 
+                p.data -= lr * p.grad
 
     rr_indices[node_id] = idx_start
     # return new weights

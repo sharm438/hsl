@@ -10,13 +10,14 @@ import aggregation
 import train_node
 import models
 import math
+import pdb
 
 # mp.set_start_method("spawn", force=True) # Only needed if you use multiprocessing
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp", type=str, default='experiment')
-    parser.add_argument("--dataset", type=str, default='mnist', choices=['mnist', 'cifar10'])
+    parser.add_argument("--dataset", type=str, default='mnist', choices=['mnist', 'cifar10', 'agnews'])
     parser.add_argument("--fraction", type=float, default=1.0)
     parser.add_argument("--bias", type=float, default=0.0)
     parser.add_argument("--aggregation", type=str, default='fedsgd', 
@@ -111,7 +112,7 @@ def main(args):
         distributed_data = distributedData.distributed_input
         distributed_label = distributedData.distributed_output
         node_weights = distributedData.wts
-
+       
         num_samples_per_spoke = [len(distributed_data[i]) for i in range(args.num_spokes)]
         min_size = min(num_samples_per_spoke)
         max_size = max(num_samples_per_spoke)
@@ -228,7 +229,7 @@ def main(args):
                     rr_indices
                 )
                 node_return[node_id] = updated_wts
-
+            
             # --------------------------------------------------------
             # (1) Monitor drift among node models (PRE-aggregation)
             # --------------------------------------------------------
@@ -242,18 +243,23 @@ def main(args):
             # -------------------------
             # Aggregation step
             # -------------------------
+            
             if args.aggregation == 'fedsgd':
                 local_models = [node_return[i] for i in range(args.num_spokes)]
                 aggregated_wts = aggregation.federated_aggregation(local_models, node_weights)
                 global_model = utils.vec_to_model(aggregated_wts.to(aggregator_device),
                                                   net_name, inp_dim, out_dim, aggregator_device)
-
+                
                 # Evaluate every eval_time
                 if (rnd+1) % args.eval_time == 0:
-                    traced_model = torch.jit.trace(
-                        deepcopy(global_model),
-                        torch.randn([batch_size]+utils.get_input_shape(args.dataset)).to(aggregator_device)
-                    )
+                    if args.dataset == 'agnews':
+                        traced_model = deepcopy(global_model)
+                    else:
+                        traced_model = torch.jit.trace(
+                            deepcopy(global_model),
+                            torch.randn([batch_size]+utils.get_input_shape(args.dataset)).to(aggregator_device)
+                        )
+                    
                     loss, acc = utils.evaluate_global_metrics(traced_model, test_data, aggregator_device)
                     metrics['round'].append(rnd+1)
                     metrics['global_loss'].append(loss)
@@ -572,7 +578,7 @@ def main(args):
             # store in metrics
             metrics['avg_mixing_matrix'] = W_avg.tolist()  # convert to list
             metrics['spectral_gap'] = spectral_gap
-            print(f"[Info] {args.aggregation} average spectral gap: {spectral_gap:.4f}")
+            print(f"[Info] {args.aggregation} average spectral gap: {spectral_gap:.8f}")
 
     elif args.aggregation == 'hsl':
         if count_hsl > 0 and W_hs_acc is not None:

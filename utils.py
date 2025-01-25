@@ -5,6 +5,12 @@ import torchvision.transforms as transforms
 from torch.utils.data import random_split
 import models
 import torch.nn as nn
+import torchtext
+torchtext.disable_torchtext_deprecation_warning()
+from torchtext.datasets import AG_NEWS
+from torchtext.data.utils import get_tokenizer
+from collections import Counter
+import pdb
 
 class TrainObject:
     def __init__(self, dataset_name, net_name, train_data, train_labels,
@@ -70,6 +76,99 @@ def load_data(dataset_name, batch_size, lr, fraction=1.0):
                                              transform=transform_test,download=True)
         test_data=torch.utils.data.DataLoader(testset,batch_size=128,shuffle=False)
 
+    elif dataset_name=='agnews':
+        """
+        We will:
+        1) Download AG_NEWS dataset
+        2) Tokenize and build vocab
+        3) Convert each example into a padded tensor of token IDs
+        4) Return TrainObject with data/labels in-memory, ready for distribution
+        """
+        if batch_size is None:
+            batch_size = 32  # A reasonable default for text
+
+        # 1) Load raw AG_NEWS via TorchText
+        train_iter, test_iter = AG_NEWS(split=('train', 'test'))
+
+        # 2) Tokenize and build vocabulary
+        tokenizer = get_tokenizer('basic_english')
+        counter = Counter()
+        raw_train = []
+        for (lbl, txt) in train_iter:
+            # lbl in {1,2,3,4}, txt is raw string
+            raw_train.append((lbl, txt))
+            counter.update(tokenizer(txt))
+        vocab = list(counter.keys())
+        # Keep tokens that appear at least once (already in Counter)
+        # Or you could do min_freq=2, etc. to filter more aggressively
+
+        stoi = {word: i+2 for i, word in enumerate(vocab)}  # +2 to leave room for PAD=0, UNK=1
+        stoi["<PAD>"] = 0
+        stoi["<UNK>"] = 1
+
+        def text_pipeline(txt):
+            return [stoi.get(token, 1) for token in tokenizer(txt)]
+
+        # 3) Convert each example => (tensor_of_token_ids, label)
+        #    We'll also track the maximum sequence length to pad
+        max_len = 0
+        train_data_list, train_label_list = [], []
+        for (lbl, txt) in raw_train:
+            token_ids = text_pipeline(txt)
+            max_len = max(max_len, len(token_ids))
+            train_data_list.append(token_ids)
+            # AG_NEWS labels are 1..4 => use them as is (code does int(lbl) - 1 later if needed)
+            train_label_list.append(lbl)
+
+        # convert to padded Tensors
+        def pad_sequence(seq, max_len):
+            # pad or truncate to max_len
+            if len(seq) >= max_len:
+                return seq[:max_len]
+            else:
+                return seq + [0]*(max_len - len(seq))  # 0 => <PAD>
+
+        padded_train_data = []
+        for token_ids in train_data_list:
+            padded_train_data.append(torch.tensor(pad_sequence(token_ids, max_len), dtype=torch.long))
+
+        data = torch.stack(padded_train_data)  # shape [N, max_len]
+        labels = torch.tensor(train_label_list, dtype=torch.long)  # shape [N]
+        labels = labels - 1 # Now labels are 0..3
+        # 4) For the test set, we'll store it as a DataLoader similar to MNIST/CIFAR
+        #    so we can evaluate with your existing evaluate_global_metrics
+        #    That function expects (images, labels) from each batch, but we'll pass (text, label).
+        #    We'll do something minimal here:
+        raw_test = list(test_iter)
+        # find max_len in test set if we want separate
+        max_len_test = 0
+        test_data_list, test_label_list = [], []
+        for (lbl, txt) in raw_test:
+            token_ids = text_pipeline(txt)
+            max_len_test = max(max_len_test, len(token_ids))
+            test_data_list.append(token_ids)
+            test_label_list.append(lbl)
+
+        # We'll match training max_len for simplicity or choose the largest of the two
+        final_max_len = max_len  # or max(max_len, max_len_test)
+        padded_test_data = []
+        for token_ids in test_data_list:
+            padded_test_data.append(torch.tensor(pad_sequence(token_ids, final_max_len), dtype=torch.long))
+
+        test_data_tensors = torch.stack(padded_test_data)  # shape [N_test, final_max_len]
+        test_label_tensors = torch.tensor(test_label_list, dtype=torch.long)
+        test_label_tensors = test_label_tensors - 1
+        # We'll pass a custom dataset => DataLoader
+        test_ds = torch.utils.data.TensorDataset(test_data_tensors, test_label_tensors)
+        test_data = torch.utils.data.DataLoader(test_ds, batch_size=batch_size, shuffle=False)
+
+        num_inputs = final_max_len       # "input dimension" = sequence length
+        num_outputs = 4                  # AG_NEWS has 4 classes
+        net_name = 'agnews_net'          # We'll define this in models.py  
+
+        
+
+    
     return TrainObject(dataset_name, net_name, data, labels, test_data,
                        num_inputs, num_outputs, lr, batch_size)
 
@@ -202,6 +301,8 @@ def get_input_shape(dataset_name):
         return [1,28,28]
     elif dataset_name=='cifar10':
         return [3,32,32]
+    elif dataset_name=='agnews':
+        return [207]
 
 def create_k_random_regular_graph(n, k, device):
     W = torch.zeros((n,n),device=device)

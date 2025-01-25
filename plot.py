@@ -10,7 +10,9 @@ def plot_candles(
     experiments,
     base_path="",
     title="Accuracy Candle Plot",
-    output_filename="candle_plot.png"
+    output_filename="candle_plot.png",
+    half_width=8,
+    xlim=[]
 ):
     """
     Experiment 1: Plot final-spoke-accuracy distributions from HSL / P2P experiments as "candles."
@@ -32,9 +34,9 @@ def plot_candles(
     
     # Color scheme for the aggregators:
     color_map = {
-        'p2p': 'orange',
-        'p2p_local': 'maroon',
-        'hsl': 'indigo'
+        'p2p': 'peru',
+        'p2p_local': 'tab:red',
+        'hsl': 'forestgreen'
     }
     # Slight shift so HSL or ELL points with close 'cost' won't overlap too much.
     x_shift_map = {
@@ -44,9 +46,9 @@ def plot_candles(
     }
     # Labels for legend (merged P2P + p2p_local into "EL Local").
     aggregator_legend_label = {
-        'p2p': 'EL Local',
-        'p2p_local': 'EL Local',
-        'hsl': 'HSL'
+        'p2p': 'EL Local ($n_s, k$)',
+        'p2p_local': 'EL Local ($n_s, k$)',
+        'hsl': 'HSL ($n_s, n_h, b_{hs}, b_{hh}, b_{sh}$)'
     }
     
     used_legend_labels = set()
@@ -110,10 +112,10 @@ def plot_candles(
                     color=candle_color, alpha=0.8, linewidth=1)
         
         # Candle body
-        half_width = 8.0#**2
+        #half_width = 8#*5
         ax.fill_between([x - half_width, x + half_width],
                         y1=q1, y2=q3,
-                        color=candle_color, alpha=0.4, linewidth=0)
+                        color=candle_color, alpha=0.8, linewidth=0)
         
         # Place config label
         if aggregator == 'hsl':
@@ -137,21 +139,22 @@ def plot_candles(
         all_y_vals.extend([min_val, q1, q3, max_val])
     
     # Adjust x-range
-    if costs_record:
-        margin = 50
-        ax.set_xlim(min(costs_record) - margin, max(costs_record) + margin)
+    #if costs_record:
+    #    margin = 50
+    #    ax.set_xlim(min(costs_record) - margin, max(costs_record) + margin)
     # Adjust y-range
+    ax.set_xlim(xlim[0], xlim[1])
     if all_y_vals:
         y_margin = 0.02
         ymin = min(all_y_vals) - y_margin
         ymax = max(all_y_vals) + y_margin
         ax.set_ylim(ymin, ymax)
     
-    ax.set_xlabel("#edges in the graph")
-    ax.set_ylabel("Final Spoke Accuracy")
+    ax.set_xlabel("#edges in the graph", fontsize=14)
+    ax.set_ylabel("Final Spoke Accuracy", fontsize=14)
     #ax.set_title(title)
     ax.grid(True)
-    ax.legend()
+    ax.legend(fontsize=12)
     plt.tight_layout()
     plt.savefig(output_filename, dpi=200)
     print(f"[Info] Candle plot saved to {output_filename}")
@@ -161,7 +164,9 @@ def plot_drift(
     experiments,
     base_path="",
     title="Drift Ratio (pre_drift / post_drift) vs. Time",
-    output_filename="drift_plot.png"
+    output_filename="drift_plot.png",
+    yticks=[],
+    ylim=[0,2]
 ):
     """
     Experiment 2: 
@@ -177,14 +182,14 @@ def plot_drift(
     ax = fig.add_subplot(111)
     
     aggregator_legend_label = {
-        'p2p': 'EL Local',
-        'p2p_local': 'EL Local',
-        'hsl': 'HSL'
+        'p2p': 'EL Local ($n_s, k$)',
+        'p2p_local': 'EL Local ($n_s, k$)',
+        'hsl': 'HSL ($n_s, n_h, b_{hs}, b_{hh}, b_{sh}$)'
     }
     color_map = {
-        'p2p': 'orange',
-        'p2p_local': 'orange',
-        'hsl': 'blue'
+        'p2p': 'peru',
+        'p2p_local': 'tab:red',
+        'hsl': 'forestgreen'
     }
     
     used_legend_labels = set()
@@ -215,6 +220,7 @@ def plot_drift(
         
         # ratio = pre_drift / post_drift
         ratio_arr = np.array(pre_drift_list) / np.array(post_drift_list)
+        ratio_log = np.log10(ratio_arr)
         
         # x from 0..500
         n_points = len(ratio_arr)
@@ -224,14 +230,14 @@ def plot_drift(
         legend_label = aggregator_legend_label.get(aggregator, aggregator)
         
         ax.plot(
-            x_vals, ratio_arr,
+            x_vals, ratio_log,
             marker='o', linestyle='-',
             color=color_, alpha=0.9
         )
         
         # Put config tuple near the last data point
         x_end = x_vals[-1]
-        y_end = ratio_arr[-1]
+        y_end = ratio_log[-1]
         # Shift further right so it doesn't get cut off
         ax.text(
             x_end + 15,  # +15 to ensure there's space for the tuple
@@ -253,26 +259,28 @@ def plot_drift(
     ax.set_xlim(0, 550)  # extra space so text isn't cut off
     # Now use log scale on y-axis
     ax.set_yscale('log')
-    
+
     # Define custom y ticks: e.g. 0.1, 1, 5, 10, 20, 50, 100...
-    ticks = [1, 5, 10, 20, 50, 100]
+    ticks = yticks#[0.25, 0.5, 1, 2]
     ax.set_yticks(ticks)
     # Show them in normal form
     ax.set_yticklabels([str(t) for t in ticks])
+    #ax.set_ylim(ylim)
     
     # Use minor ticks for sub-steps
-    ax.yaxis.set_minor_locator(LogLocator(base=10, subs=[0.2, 0.3, 0.4, 0.6, 0.8]))
-    ax.yaxis.set_minor_formatter(LogFormatter())
-    
+    #ax.yaxis.set_minor_locator(LogLocator(base=10, subs=[0.2, 0.3, 0.4, 0.6]))
+    #ax.yaxis.set_minor_formatter(LogFormatter())
+    from matplotlib.ticker import FixedLocator
+    ax.yaxis.set_minor_locator(FixedLocator([]))
     # Grid
     ax.grid(which='major', linewidth=1.0)
     ax.grid(which='minor', linestyle='--', alpha=0.5)
     
     # Rename y-axis
-    ax.set_ylabel("-log(mixing ratio)")
-    ax.set_xlabel("Time")
+    ax.set_ylabel("$-log_{10}(CDR)$", fontsize=14)
+    ax.set_xlabel("Time", fontsize=14)
     #ax.set_title(title)
-    ax.legend()
+    ax.legend(fontsize=12)
     
     # Make extra room on the right to fit the text
     plt.subplots_adjust(right=0.85)
@@ -351,44 +359,44 @@ if __name__ == "__main__":
             'config': (100, 18)
         },
         {
-            'filename': "ell_cifar10_s100k20_seed4_metrics.json",
+            'filename': "ell_cifar10_s100k20_seed5_metrics.json",
             'aggregator': "p2p",
             'cost': 1000,
             'config': (100, 20)
         },
-        {
-            'filename': "ell_cifar10_s100k22_seed2_metrics.json",
-            'aggregator': "p2p",
-            'cost': 1100,
-            'config': (100, 22)
-        },
-        {
-            'filename': "ell_cifar10_s100k24_seed1_metrics.json",
-            'aggregator': "p2p",
-            'cost': 1200,
-            'config': (100, 24)
-        },
+        #{
+        #    'filename': "ell_cifar10_s100k22_seed2_metrics.json",
+        #    'aggregator': "p2p",
+        #    'cost': 1100,
+        #    'config': (100, 22)
+        #},
+        #{
+        #    'filename': "ell_cifar10_s100k24_seed1_metrics.json",
+        #    'aggregator': "p2p",
+        #    'cost': 1200,
+        #    'config': (100, 24)
+        #},
         
 
         # HSL
-        #{
-        #    'filename': "hsl_cifar10_s100h10_bud_1_1_1_seed1_metrics.json",
-        #    'aggregator': "hsl",
-        #    'cost': 115,
-        #    'config': (100, 10, 1, 1, 1)
-        #},
+        {
+            'filename': "hsl_cifar10_s100h10_bud_1_1_1_seed1_metrics.json",
+            'aggregator': "hsl",
+            'cost': 115,
+            'config': (100, 10, 1, 1, 1)
+        },
         #{
         #    'filename': "hsl_cifar10_s100h10_bud_1_2_1_seed1_metrics.json",
         #    'aggregator': "hsl",
         #    'cost': 120,
         #    'config': (100, 10, 1, 2, 1)
         #},
-        {
-            'filename': "hsl_cifar10_s100h10_bud_2_1_1_seed1_metrics.json",
-            'aggregator': "hsl",
-            'cost': 125,
-            'config': (100, 10, 2, 1, 1)
-        },
+        #{
+        #    'filename': "hsl_cifar10_s100h10_bud_2_1_1_seed1_metrics.json",
+        #    'aggregator': "hsl",
+        #    'cost': 125,
+        #    'config': (100, 10, 2, 1, 1)
+        #},
         {
             'filename': "hsl_cifar10_s100h20_bud_2_1_2_seed1_metrics.json",
             'aggregator': "hsl",
@@ -451,23 +459,23 @@ if __name__ == "__main__":
         #},
         
         {
-            'filename': "hsl_cifar10_s100h15_bud_30_20_4_seed1_metrics.json",
+            'filename': "hsl_cifar10_s100h15_bud_30_20_4_seed3_metrics.json",
             'aggregator': "hsl",
             'cost': 1000,
             'config': (100, 15, 30, 20, 4)
         },
-        {
-            'filename': "hsl_cifar10_s100h20_bud_30_20_3_seed1_metrics.json",
-            'aggregator': "hsl",
-            'cost': 1100,
-            'config': (100, 20, 30, 20, 3)
-        },
-        {
-            'filename': "hsl_cifar10_s100h20_bud_30_20_4_seed1_metrics.json",
-            'aggregator': "hsl",
-            'cost': 1200,
-            'config': (100, 20, 30, 20, 4)
-        },
+        #{
+        #    'filename': "hsl_cifar10_s100h20_bud_30_20_3_seed2_metrics.json",
+        #    'aggregator': "hsl",
+        #    'cost': 1100,
+        #    'config': (100, 20, 30, 20, 3)
+        #},
+        #{
+        #    'filename': "hsl_cifar10_s100h20_bud_30_20_4_seed1_metrics.json",
+        #    'aggregator': "hsl",
+        #    'cost': 1200,
+        #    'config': (100, 20, 30, 20, 4)
+        #},
         
         
     ]
@@ -504,7 +512,7 @@ if __name__ == "__main__":
             'config': (200, 20)
         },
         {
-            'filename': "ell_cifar10_s200k25_seed2_metrics.json",
+            'filename': "ell_cifar10_s200k25_seed3_metrics.json",
             'aggregator': "p2p",
             'cost': 2500,
             'config': (200, 25)
@@ -515,23 +523,34 @@ if __name__ == "__main__":
             'cost': 3000,
             'config': (200, 30)
         },
+        #{
+        #    'filename': "ell_cifar10_s200k35_seed2_metrics.json",
+        #    'aggregator': "p2p",
+        #    'cost': 3500,
+        #    'config': (200, 35)
+        #},
+        #{
+        #    'filename': "ell_cifar10_s200k40_seed1_metrics.json",
+        #    'aggregator': "p2p",
+        #    'cost': 4000,
+        #    'config': (200, 40)
+        #},
+        #{
+        #    'filename': "hsl_cifar10_s200h15_bud_10_3_1_seed1_metrics.json",
+        #    'aggregator': "hsl",
+        #    'cost': 315,
+        #    'config': (200, 15, 10, 3, 1)
+        #}, 
         {
-            'filename': "ell_cifar10_s200k35_seed2_metrics.json",
-            'aggregator': "p2p",
-            'cost': 3500,
-            'config': (200, 35)
-        },
-        {
-            'filename': "ell_cifar10_s200k40_seed1_metrics.json",
-            'aggregator': "p2p",
-            'cost': 4000,
-            'config': (200, 40)
-        },
-
+            'filename': "hsl_cifar10_s200h15_bud_10_3_2_seed1_metrics.json",
+            'aggregator': "hsl",
+            'cost': 573,
+            'config': (200, 15, 10, 3, 2)
+        }, 
         {
             'filename': "hsl_cifar10_s200h15_bud_20_3_3_seed1_metrics.json",
             'aggregator': "hsl",
-            'cost': 930,
+            'cost': 923,
             'config': (200, 15, 20, 3, 3)
         },        
         #{
@@ -559,7 +578,7 @@ if __name__ == "__main__":
             'config': (200, 50, 20, 5, 5)
         },
         {
-            'filename': "hsl_cifar10_s200h50_bud_20_5_7_seed1_metrics.json",
+            'filename': "hsl_cifar10_s200h50_bud_20_5_7_seed2_metrics.json",
             'aggregator': "hsl",
             'cost': 2525,
             'config': (200, 50, 20, 5, 7)
@@ -570,29 +589,30 @@ if __name__ == "__main__":
             'cost': 3100,
             'config': (200, 40, 25, 5, 10)
         },
-        {
-            'filename': "hsl_cifar10_s200h40_bud_25_5_12_seed1_metrics.json",
-            'aggregator': "hsl",
-            'cost': 3500,
-            'config': (200, 40, 25, 5, 12)
-        },
-         {
-            'filename': "hsl_cifar10_s200h50_bud_30_10_16_seed1_metrics.json",
-            'aggregator': "hsl",
-            'cost': 3950,
-            'config': (200, 50, 30, 10, 16)
-        },
+        #{
+        #    'filename': "hsl_cifar10_s200h40_bud_25_5_12_seed2_metrics.json",
+        #    'aggregator': "hsl",
+        #    'cost': 3500,
+        #    'config': (200, 40, 25, 5, 12)
+        #},
+        #{
+        #    'filename': "hsl_cifar10_s200h50_bud_30_10_16_seed2_metrics.json",
+        #    'aggregator': "hsl",
+        #    'cost': 3950,
+        #    'config': (200, 50, 30, 10, 16)
+        #},
         
         
         
     ]
 
     # --- Experiment 1: Candle plot for final accuracies ---
-    plot_candles(experiments_exp1,base_path="./outputs/",title="HSL vs P2P: Final Accuracy Distribution",output_filename="exp_1a_s100.png")
+    plot_candles(experiments_exp1,base_path="./outputs/",title="HSL vs P2P: Final Accuracy Distribution",output_filename="bud-acc-s100.png", half_width=8, xlim=[0, 1100])
+    plot_drift(experiments_exp1, base_path="./outputs/",title="Drift Ratio (pre_drift / post_drift) vs. Time", output_filename="cdr-s100.png", yticks=[0.25,0.5,1,2], ylim=[0,2.2])
 
     # --- Experiment 1b: Candle plot for s=200 ---
-    #plot_candles(experiments_exp1b,base_path="./outputs/",title="HSL vs P2P: Final Accuracy Distribution",output_filename="exp_1b_s200.png")
-    
+    plot_candles(experiments_exp1b,base_path="./outputs/",title="HSL vs P2P: Final Accuracy Distribution",output_filename="bud-acc-s200.png", half_width=40, xlim=[0, 3500])
+    plot_drift(experiments_exp1b, base_path="./outputs/",title="Drift Ratio (pre_drift / post_drift) vs. Time", output_filename="cdr-s200.png", yticks=[0.25,0.5,1,2], ylim=[-0.2,2])
+
     # --- Experiment 2: Drift ratio plot with new modifications ---
     #experiments_exp2 = experiments_exp1  # Reuse the same list, so ensure JSONs have pre_drift/post_drift
-    #plot_drift(experiments_exp2, base_path="./outputs/",title="Drift Ratio (pre_drift / post_drift) vs. Time", output_filename="drift_plot.png")
