@@ -85,7 +85,7 @@ def load_data(dataset_name, batch_size, lr, fraction=1.0):
         4) Return TrainObject with data/labels in-memory, ready for distribution
         """
         if batch_size is None:
-            batch_size = 32  # A reasonable default for text
+            batch_size = 64  # A reasonable default for text
 
         # 1) Load raw AG_NEWS via TorchText
         train_iter, test_iter = AG_NEWS(split=('train', 'test'))

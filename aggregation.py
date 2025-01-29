@@ -30,16 +30,21 @@ def p2p_local_aggregation(node_wts, outdegree, return_W=False):
         W_local = torch.zeros((num_nodes, num_nodes), device=node_wts.device)
 
     for i in range(num_nodes):
-        # pick outdegree random neighbors
-        if outdegree <= num_nodes - 1:
-            chosen = torch.randperm(num_nodes, device=node_wts.device)[:outdegree]
-        else:
-            chosen = torch.randint(low=0, high=num_nodes, size=(outdegree,), device=node_wts.device)
+        # Create a pool of neighbors excluding the node itself
+        all_neighbors = torch.arange(num_nodes, device=node_wts.device)
+        all_neighbors = all_neighbors[all_neighbors != i]  # Exclude self
 
-        # also include self
-        chosen = torch.cat((chosen, torch.tensor([i], device=node_wts.device)))
-        chosen = torch.unique(chosen)
+        # Pick exactly 'outdegree' random neighbors from the pool
+        if outdegree <= num_nodes - 1:
+            chosen_neighbors = all_neighbors[torch.randperm(all_neighbors.size(0))[:outdegree]]
+        else:
+            chosen_neighbors = all_neighbors[torch.randint(0, all_neighbors.size(0), (outdegree,))]
+
+        # Include the node itself
+        chosen = torch.cat((chosen_neighbors, torch.tensor([i], device=node_wts.device)))
         neighbors_models = node_wts[chosen]
+        
+        # Compute the mean vector and update weights
         mean_vec = neighbors_models.mean(dim=0)
         updated_wts[i] = mean_vec
 
@@ -47,8 +52,9 @@ def p2p_local_aggregation(node_wts, outdegree, return_W=False):
             # Each row i => 1/|chosen| for columns in chosen
             for c in chosen:
                 W_local[i, c] = 1.0
+
     if return_W:
-        # convert each row i into row-stochastic
+        # Convert each row i into row-stochastic
         for i in range(num_nodes):
             row_sum = torch.sum(W_local[i])
             if row_sum > 0:
@@ -56,3 +62,4 @@ def p2p_local_aggregation(node_wts, outdegree, return_W=False):
         return updated_wts, W_local
     else:
         return updated_wts
+
