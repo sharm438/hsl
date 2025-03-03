@@ -10,9 +10,6 @@ def load_net(net_name, num_inp, num_out, device):
         model = CIFAR_CNN(num_classes=num_out)
     elif net_name=='agnews_net':
         model = SmallTransformer(vocab_size=95812)
-        #model = TextRNN(vocab_size=95812, embed_dim=128, hidden_dim=256, num_classes=num_out)
-        #model = AGNewsNet(vocab_size=95812, num_classes=num_out)
-        
 
     model.to(device)
     return model
@@ -44,60 +41,6 @@ class SmallTransformer(nn.Module):
         out = encoded.mean(dim=1)
         # Fully connected layer
         out = self.fc(out)
-        return out
-
-
-class TextRNN(nn.Module):
-    def __init__(self, vocab_size, embed_dim, hidden_dim, num_classes):
-        super(TextRNN, self).__init__()
-        self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=0)
-        self.rnn = nn.LSTM(embed_dim, hidden_dim, batch_first=True)
-        self.fc = nn.Linear(hidden_dim, num_classes)
-    
-    def forward(self, x):
-        x = x.to(torch.long)
-        embedded = self.embedding(x)  # [batch_size, seq_len, embed_dim]
-        _, (hidden, _) = self.rnn(embedded)  # hidden => [1, batch_size, hidden_dim]
-        out = self.fc(hidden.squeeze(0))  # [batch_size, num_classes]
-        return out
-
-
-
-class AGNewsNet(nn.Module):
-    def __init__(self, vocab_size, embed_dim=64, num_classes=4, padding_idx=0):
-        """
-        Args:
-          vocab_size: the total number of unique token indices (including special tokens).
-          embed_dim : dimensionality of the embeddings.
-          num_classes: number of output classes (4 for AG_NEWS).
-          padding_idx: index to treat as padding (usually 0).
-        """
-        super(AGNewsNet, self).__init__()
-        self.embedding = nn.Embedding(
-            num_embeddings=vocab_size,
-            embedding_dim=embed_dim,
-            padding_idx=padding_idx
-        )
-        # We'll do a simple average pooling across the sequence dimension,
-        # then a fully-connected layer to produce logits.
-        self.fc = nn.Linear(embed_dim, num_classes)
-
-    def forward(self, x):
-        """
-        Forward pass:
-          x shape: [batch_size, seq_len]
-        Returns:
-          out shape: [batch_size, num_classes]
-        """
-        x = x.to(torch.long)
-        # Embedding layer => [batch_size, seq_len, embed_dim]
-        embedded = self.embedding(x)
-
-        # Average embedding across the seq_len dimension => [batch_size, embed_dim]
-        avg_embed = embedded.mean(dim=1)
-
-        # Classifier => [batch_size, num_classes]
-        out = self.fc(avg_embed)
         return out
 
 

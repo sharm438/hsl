@@ -11,6 +11,8 @@ from torchtext.datasets import AG_NEWS
 from torchtext.data.utils import get_tokenizer
 from collections import Counter
 import pdb
+import math
+import random
 
 class TrainObject:
     def __init__(self, dataset_name, net_name, train_data, train_labels,
@@ -318,3 +320,75 @@ def create_k_random_regular_graph(n, k, device):
     perm = torch.randperm(n, device=device)
     W = W[perm][:,perm]
     return W
+
+def create_ring_graph(n, device):
+    """
+    Create a ring mixing matrix for `n` nodes.
+    Each node is connected to its two neighbors (left and right).
+    """
+    W = torch.zeros((n, n), device=device)
+    for i in range(n):
+        W[i, i] = 1 / 3
+        W[i, (i - 1) % n] = 1 / 3  # Left neighbor
+        W[i, (i + 1) % n] = 1 / 3  # Right neighbor
+    return W
+
+def create_torus_graph(n, device):
+    """
+    Create a torus mixing matrix for `n` nodes.
+    Assume n is a perfect square, i.e., `sqrt(n)` is an integer.
+    """
+    sqrt_n = int(math.sqrt(n))
+    if sqrt_n ** 2 != n:
+        raise ValueError("Number of nodes `n` must be a perfect square for a torus graph.")
+
+    W = torch.zeros((n, n), device=device)
+    for i in range(sqrt_n):
+        for j in range(sqrt_n):
+            node = i * sqrt_n + j
+            neighbors = [
+                ((i - 1) % sqrt_n) * sqrt_n + j,  # Top neighbor
+                ((i + 1) % sqrt_n) * sqrt_n + j,  # Bottom neighbor
+                i * sqrt_n + (j - 1) % sqrt_n,    # Left neighbor
+                i * sqrt_n + (j + 1) % sqrt_n     # Right neighbor
+            ]
+            for neighbor in neighbors:
+                W[node, neighbor] = 1 / 5
+            W[node, node] = 1 / 5  # Include self-loop
+    return W
+
+def create_erdos_renyi_graph(n, m, device):
+    """
+    Generates an Erdős–Rényi (ER) graph with exactly `m` edges 
+    among `n` nodes and returns its row-stochastic mixing matrix W.
+
+    Args:
+        n (int): Number of nodes.
+        m (int): Desired number of edges.
+        device (torch.device): The device on which to create the matrix.
+
+    Returns:
+        torch.Tensor: Row-stochastic mixing matrix W of shape (n, n).
+    """
+    if m > (n * (n - 1)) // 2:
+        raise ValueError("Too many edges for the given number of nodes.")
+
+    # Step 1: Create all possible edges
+    all_edges = [(i, j) for i in range(n) for j in range(i + 1, n)]
+    
+    # Step 2: Randomly select exactly m edges
+    chosen_edges = random.sample(all_edges, m)
+
+    # Step 3: Create adjacency matrix
+    W = torch.eye(n, device=device)
+    for i, j in chosen_edges:
+        W[i, j] = 1.0
+        W[j, i] = 1.0  # Undirected graph
+
+    # Step 4: Normalize rows to make W row-stochastic
+    row_sums = W.sum(dim=1, keepdim=True)
+    row_sums[row_sums == 0] = 1  # Prevent division by zero
+    W /= row_sums
+
+    return W
+
