@@ -49,7 +49,7 @@ def load_femnist_data(batch_size=32, lr=0.01, fraction=1.0):
     num_outputs = 62  # FEMNIST has 62 classes (digits + uppercase + lowercase letters)
     transform = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize((0.9637,), (0.1598,))
+        transforms.Normalize((0.1307,), (0.3081,))
     ])
 
     train_path = './data/leaf/data/femnist/data/train'
@@ -67,7 +67,7 @@ def load_femnist_data(batch_size=32, lr=0.01, fraction=1.0):
                     user_y = data_json['user_data'][user]['y']
                     
                     # Convert to tensors and apply transforms
-                    user_images = [transform(Image.fromarray(np.array(img).reshape(28, 28).astype(np.uint8))) for img in user_x]
+                    user_images = [transform(Image.fromarray(np.array(img).reshape(28, 28).astype(np.float32))) for img in user_x]
                     user_images = torch.stack(user_images)
                     user_labels = torch.tensor(user_y, dtype=torch.long)
 
@@ -88,10 +88,11 @@ def load_femnist_data(batch_size=32, lr=0.01, fraction=1.0):
         full_train_data = full_train_data[selected_indices]
         full_train_labels = full_train_labels[selected_indices]
 
-    test_data_list, test_label_list, _, _ = read_json_files(test_path)
+    test_data_list, test_label_list, all_test_data, all_test_label = read_json_files(test_path)
+    
     test_data_combined = torch.cat(test_data_list)
     test_labels_combined = torch.cat(test_label_list)
-    test_dataset = torch.utils.data.TensorDataset(test_data_combined, test_labels_combined)
+    test_dataset = torch.utils.data.TensorDataset(all_test_data, all_test_label)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
     num_inputs = 28 * 28

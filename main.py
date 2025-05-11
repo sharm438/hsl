@@ -61,7 +61,7 @@ def parse_args():
     parser.add_argument("--sample_type", type=str, default="round_robin",
                         choices=["round_robin","random"],
                         help='How data is sampled for local training.')
-    parser.add_argument("--seed", type=int, default=0,
+    parser.add_argument("--seed", type=int, default=108,
                         help='Random seed. If 0 or negative, uses a random seed.')
 
     # HSL parameters
