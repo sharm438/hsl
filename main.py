@@ -14,6 +14,8 @@ import pdb
 import tqdm
 from tqdm import tqdm
 
+from simple_base_graph import SimpleBaseGraph
+from base_graph import BaseGraph
 
 def parse_args():
     """Parse command-line arguments."""
@@ -21,7 +23,7 @@ def parse_args():
     parser.add_argument("--exp", type=str, default='experiment',
                         help='Experiment name for output files.')
     parser.add_argument("--dataset", type=str, default='mnist',
-                        choices=['mnist', 'cifar10', 'agnews'],
+                        choices=['mnist', 'cifar10', 'femnist', 'agnews', 'tiny_imagenet', 'cifar100'],
                         help='Dataset to use.')
     parser.add_argument("--fraction", type=float, default=1.0,
                         help='Fraction of the dataset to be used for training.')
@@ -31,7 +33,7 @@ def parse_args():
                         choices=['fedsgd', 'p2p', 'p2p_local', 'hsl'],
                         help='Aggregation protocol to use.')
     parser.add_argument("--topo", type=str, default=None,
-                        choices=['ring', 'torus', 'erdos-renyi'],
+                        choices=['ring', 'torus', 'erdos-renyi', 'base-graph', 'simple-base-graph', 'exponential'],
                         help='Topology to use for p2p graphs.')
     parser.add_argument("--budget", type=int, default=None,
                         help='Number of edges in an undirected p2p graph '
@@ -46,7 +48,7 @@ def parse_args():
                         help='Local training epochs/iterations per round.')
     parser.add_argument("--batch_size", type=int, default=None,
                         help='Mini-batch size for local training.')
-    parser.add_argument("--eval_time", type=int, default=10,
+    parser.add_argument("--eval_time", type=int, default=1,
                         help='Evaluate the model every "eval_time" rounds.')
     parser.add_argument("--gpu", type=int, default=0,
                         help='GPU ID; use -1 for CPU.')
@@ -115,29 +117,46 @@ def main(args):
 
     # Load data if we are doing real training
     if not args.graph_simulation_only:
-        trainObject = utils.load_data(args.dataset, args.batch_size, args.lr, args.fraction)
-        data, labels = trainObject.train_data, trainObject.train_labels
-        test_data = trainObject.test_data
-        inp_dim = trainObject.num_inputs
-        out_dim = trainObject.num_outputs
-        lr = args.lr
-        batch_size = trainObject.batch_size
-        net_name = trainObject.net_name
-
-        # Distribute data to spokes in a potentially non-IID way
-        distributedData = utils.distribute_data_noniid(
-            (data, labels),
-            args.num_spokes,
-            args.bias,
-            inp_dim,
-            out_dim,
-            net_name,
-            torch.device("cpu"),
-            min_samples=(batch_size if batch_size else 1)
-        )
-        distributed_data = distributedData.distributed_input
-        distributed_label = distributedData.distributed_output
-        node_weights = distributedData.wts
+        if args.dataset == 'femnist':
+            trainObject, distributed_data, distributed_label = utils.load_data(args.dataset, 32, args.lr, args.fraction)
+            test_data = trainObject.test_data
+            inp_dim = trainObject.num_inputs
+            out_dim = trainObject.num_outputs
+            lr = args.lr
+            batch_size = trainObject.batch_size
+            net_name = trainObject.net_name
+            num_clients = len(distributed_label)
+            counts = torch.tensor([distributed_label[i].shape[0] for i in range(num_clients)],dtype=torch.float32)
+            node_weights = counts / counts.sum()
+            node_weights = node_weights.to(aggregator_device)
+            
+            
+        else:
+            trainObject = utils.load_data(args.dataset, args.batch_size, args.lr, args.fraction)
+            data, labels = trainObject.train_data, trainObject.train_labels
+            test_data = trainObject.test_data
+            inp_dim = trainObject.num_inputs
+            out_dim = trainObject.num_outputs
+            lr = args.lr
+            batch_size = trainObject.batch_size
+            net_name = trainObject.net_name
+            
+            # Distribute data to spokes in a potentially non-IID way
+            distributedData = utils.distribute_data_noniid(
+                (data, labels),
+                args.num_spokes,
+                args.bias,
+                inp_dim,
+                out_dim,
+                net_name,
+                torch.device("cpu"),
+                min_samples=(batch_size if batch_size else 1)
+            )
+            #distributedData = utils.distribute_balanced_per_class(data, labels, args.num_spokes)
+            distributed_data = distributedData.distributed_input
+            distributed_label = distributedData.distributed_output
+            
+            node_weights = distributedData.wts.to(aggregator_device)
 
         # Report basic statistics about data distribution
         num_samples_per_spoke = [len(distributed_data[i]) for i in range(args.num_spokes)]
@@ -146,11 +165,11 @@ def main(args):
         mean_size = sum(num_samples_per_spoke) / len(num_samples_per_spoke)
         var_size = sum((s - mean_size)**2 for s in num_samples_per_spoke) / len(num_samples_per_spoke)
         sd_size = math.sqrt(var_size)
+        
         print(f"[Data Dist] Min={min_size}, Max={max_size}, Mean={mean_size:.1f}, SD={sd_size:.1f}")
-
         # Initialize the global model
         global_model = models.load_net(net_name, inp_dim, out_dim, aggregator_device)
-
+        
         # For round-robin or random sampling within each spoke
         rr_indices = {}
         for node_id in range(args.num_spokes):
@@ -209,9 +228,18 @@ def main(args):
         # ------------------------------------------------------------------------
         # Real Training
         # ------------------------------------------------------------------------
+        if args.topo == 'base-graph':
+            graph = BaseGraph(args.num_spokes, args.k)
+            W_base = graph.w_list
+        elif args.topo == 'simple-base-graph':
+            graph = SimpleBaseGraph(args.num_spokes, args.k)
+            W_simple_base = graph.w_list
+        elif args.topo == 'exponential':
+            W = utils.create_exponential_graph(args.num_spokes).to(device)
+
         for rnd in range(args.num_rounds):
             # Step 1: Gather the current global model weights
-            global_wts = utils.model_to_vec(global_model).cpu()
+            global_wts = utils.model_to_vec(global_model)
             node_return = {}
 
             # Step 2: Each spoke trains locally and returns updated weights
@@ -232,7 +260,7 @@ def main(args):
 
             # (Optional) Log pre-aggregation drift
             if args.monitor_model_drift and (rnd + 1) % args.eval_time == 0:
-                spoke_wts_list = [node_return[i].cpu() for i in range(args.num_spokes)]
+                spoke_wts_list = [node_return[i] for i in range(args.num_spokes)]
                 drift_val = compute_model_drift(spoke_wts_list)
                 metrics['pre_drift'].append(drift_val)
 
@@ -263,13 +291,13 @@ def main(args):
 
                 # (Optional) Log post-aggregation drift
                 if args.monitor_model_drift and (rnd + 1) % args.eval_time == 0:
-                    post_wts_list = [aggregated_wts.cpu() for _ in range(args.num_spokes)]
+                    post_wts_list = [aggregated_wts for _ in range(args.num_spokes)]
                     drift_val = compute_model_drift(post_wts_list)
                     metrics['post_drift'].append(drift_val)
 
             elif args.aggregation == 'p2p':
                 # Stack spoke updates
-                spoke_wts = torch.stack([node_return[i] for i in range(args.num_spokes)]).to(aggregator_device)
+                spoke_wts = torch.stack([node_return[i] for i in range(args.num_spokes)])
 
                 # Create adjacency matrix based on the chosen topology
                 if args.topo == 'ring':
@@ -278,6 +306,10 @@ def main(args):
                     W = utils.create_torus_graph(args.num_spokes, aggregator_device)
                 elif args.topo == 'erdos-renyi':
                     W = utils.create_erdos_renyi_graph(args.num_spokes, args.budget, aggregator_device)
+                elif args.topo == 'base-graph':
+                    W = W_base[rnd % len(W_base)].cuda()
+                elif args.topo == 'simple-base-graph': 
+                    W = W_simple_base[rnd % len(W_simple_base)].cuda()
                 else:
                     W = utils.create_k_random_regular_graph(args.num_spokes, args.k, aggregator_device)
 
@@ -321,13 +353,13 @@ def main(args):
 
                     # (Optional) Log post-aggregation drift
                     if args.monitor_model_drift:
-                        spoke_wts_list = [new_spoke_wts[i].cpu() for i in range(args.num_spokes)]
+                        spoke_wts_list = [new_spoke_wts[i] for i in range(args.num_spokes)]
                         drift_val = compute_model_drift(spoke_wts_list)
                         metrics['post_drift'].append(drift_val)
 
             elif args.aggregation == 'p2p_local':
                 # Each spoke merges with neighbors chosen locally in each round
-                spoke_wts = torch.stack([node_return[i] for i in range(args.num_spokes)]).to(aggregator_device)
+                spoke_wts = torch.stack([node_return[i] for i in range(args.num_spokes)])
                 updated_spoke_wts, W_local = aggregation.p2p_local_aggregation(
                     spoke_wts, args.k, return_W=True
                 )
@@ -369,7 +401,7 @@ def main(args):
 
                     # (Optional) Log post-aggregation drift
                     if args.monitor_model_drift:
-                        spoke_wts_list = [updated_spoke_wts[i].cpu() for i in range(args.num_spokes)]
+                        spoke_wts_list = [updated_spoke_wts[i] for i in range(args.num_spokes)]
                         drift_val = compute_model_drift(spoke_wts_list)
                         metrics['post_drift'].append(drift_val)
 
@@ -380,7 +412,7 @@ def main(args):
                   Stage 2: Hubs perform decentralized mixing (p2p_local)
                   Stage 3: Hubs -> Spokes
                 """
-                spoke_wts = torch.stack([node_return[i] for i in range(args.num_spokes)]).to(aggregator_device)
+                spoke_wts = torch.stack([node_return[i] for i in range(args.num_spokes)])
 
                 # Stage 1: Spokes -> Hubs
                 stage1_matrix = torch.zeros((args.num_hubs, args.num_spokes), device=aggregator_device)
@@ -476,7 +508,7 @@ def main(args):
 
                     # (Optional) Log post-aggregation drift
                     if args.monitor_model_drift:
-                        spoke_wts_list = [final_spoke_wts[i].cpu() for i in range(args.num_spokes)]
+                        spoke_wts_list = [final_spoke_wts[i] for i in range(args.num_spokes)]
                         drift_val = compute_model_drift(spoke_wts_list)
                         metrics['post_drift'].append(drift_val)
 

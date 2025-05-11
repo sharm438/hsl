@@ -37,16 +37,32 @@ def local_train_worker_inline(
     # We'll iterate 'num_local_iters' times over mini-batches
     idx_start = rr_indices[node_id]
     for _ in range(num_local_iters):
+        # if sample_type == 'round_robin':
+        #     # take the next batch sequentially
+        #     end_idx = idx_start + batch_size
+        #     if end_idx > local_data.shape[0]:
+        #         # wrap around
+        #         end_idx = batch_size
+        #         idx_start = 0
+        #     x = local_data[idx_start:end_idx].to(device)
+        #     y = local_label[idx_start:end_idx].to(device)
+        #     idx_start = end_idx
+
         if sample_type == 'round_robin':
-            # take the next batch sequentially
-            end_idx = idx_start + batch_size
-            if end_idx > local_data.shape[0]:
-                # wrap around
-                end_idx = batch_size
-                idx_start = 0
-            x = local_data[idx_start:end_idx].to(device)
-            y = local_label[idx_start:end_idx].to(device)
-            idx_start = end_idx
+            # take the next batch of size `batch_size`, wrapping around the dataset
+            N = local_data.shape[0]
+            # build indices [idx_start, idx_start+1, ..., idx_start+batch_size-1] mod N
+            indices = torch.tensor(
+                [(idx_start + i) % N for i in range(batch_size)],
+                device=local_data.device,
+                dtype=torch.long
+            )
+            x = local_data[indices].to(device)
+            y = local_label[indices].to(device)
+            # advance start pointer by batch_size, modulo N
+            idx_start = (idx_start + batch_size) % N
+
+            
         else:
             # random
             indices = torch.randint(0, local_data.shape[0], (batch_size,), device=local_data.device)
@@ -66,4 +82,4 @@ def local_train_worker_inline(
 
     rr_indices[node_id] = idx_start
     # return new weights
-    return utils.model_to_vec(local_model).cpu()
+    return utils.model_to_vec(local_model)
